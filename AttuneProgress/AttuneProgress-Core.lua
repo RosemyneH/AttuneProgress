@@ -108,6 +108,7 @@ itemId = GetInventoryItemID("player", invSlot);
 local function ItemAttunable(itemLink)
 	local itemSubType = select(7,GetItemInfo(itemLink))
 	local itemType = select(6,GetItemInfo(itemLink))
+	local playerClass = UnitClass("player")
 	if itemType == "Armor" then
 		
 		local itemSlot = select(9,GetItemInfo(itemLink))
@@ -123,8 +124,7 @@ local function ItemAttunable(itemLink)
 		
 		--item is jewelry
 		if itemSubType == "Miscellaneous" then return true end
-		
-		local playerClass = UnitClass("player")
+
 		--item is Shield and player is shaman paladin or druid
 		if itemSlot == "INVTYPE_SHIELD" and (playerClass == "Shaman" or playerClass == "Paladin" or playerClass == "Warrior") then return true end
 		
@@ -134,12 +134,9 @@ local function ItemAttunable(itemLink)
 	elseif itemType == "Weapon" then
 		print("weapon")
 		--ranged weapon can be attuned by player
-		if CharRangedItems[playerClass] ~= nil then
-			print("hunter")
-			if CharRangedItems[playerClass][itemSubType] then
-				print("correct ranged type")
-				return true
-			end
+		if CharRangedItems[playerClass] and CharRangedItems[playerClass][itemSubType] then
+			print("correct ranged type")
+			return true
 		end
 	end
 	--default to false
