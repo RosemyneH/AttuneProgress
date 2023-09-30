@@ -132,10 +132,8 @@ local function ItemAttunable(itemLink)
 		--itemSubType matches playerclass
 		if (itemSubType == charSubType) then return true end
 	elseif itemType == "Weapon" then
-		print("weapon")
 		--ranged weapon can be attuned by player
 		if CharRangedItems[playerClass] and CharRangedItems[playerClass][itemSubType] then
-			print("correct ranged type")
 			return true
 		end
 	end
@@ -149,7 +147,7 @@ local function GetAttuneText(itemLink)
 	local attunePercent = ItemAttuneHas[itemId]
 	if not attunePercent then attunePercent = 0 end
 	if attunePercent == 100 then
-		attuneText = "done"
+		attuneText = ""
 	else
 		attunePercent = attunePercent - (attunePercent % 1)
 		attuneText = attunePercent.."%"
@@ -163,7 +161,7 @@ local function ContainerFrame_OnUpdate(self, elapsed)
 	--containerslot does not have an item
 	if not itemLink then self.attune:SetText() return end
 	--item not attunable
-	if not ItemAttunable(itemLink) then self.attune:SetText("nil") return end
+	if not ItemAttunable(itemLink) then self.attune:SetText() return end
 	
 	self.attune:SetText(GetAttuneText(itemLink))
 end
