@@ -136,6 +136,14 @@ local function ItemAttunable(itemLink)
 		if CharRangedItems[playerClass] and CharRangedItems[playerClass][itemSubType] then
 			return true
 		end
+	elseif itemType == "Quest" then
+		local itemId = tonumber(itemLink:match('item:(%d+)'))
+		if itemId == 32649 or itemId == 32757 or itemId == 18706 then
+			--32649 Medallion of Karabor
+			--32757 Blessed Medallion of Karabor
+			--18706 Arena Master
+			return true
+		end
 	end
 	--default to false
 	return false
