@@ -1,6 +1,7 @@
 ## Interface: 30300
 ## Title: AttuneProgress
+## Author: Gescht
 ## Notes: Displays attunement progress on the item's icon in the equipment slots.
-## Version: 1.1.2
+## Version: 1.1.3
 
 AttuneProgress-Core.lua
