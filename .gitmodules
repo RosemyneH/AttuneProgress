@@ -1,0 +1,3 @@
+[submodule "AttuneProgress/Libs/SynastriaCoreLib"]
+	path = AttuneProgress/Libs/SynastriaCoreLib
+	url = https://github.com/Gescht/SynastriaCoreLib
