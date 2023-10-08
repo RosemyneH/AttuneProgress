@@ -155,7 +155,7 @@ local function GetAttuneText(itemLink)
 	local attunePercent = ItemAttuneHas[itemId]
 	if not attunePercent then attunePercent = 0 end
 	if attunePercent == 100 then
-		attuneText = ""
+		attuneText = "done"
 	else
 		attunePercent = attunePercent - (attunePercent % 1)
 		attuneText = attunePercent.."%"
