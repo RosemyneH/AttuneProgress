@@ -69,6 +69,38 @@ local function GetAttuneText(itemId)
 	return attunePercent.."%"
 end
 
+local function IsResistArmor(itemLink,itemId)
+	--item is not armor
+	if select(6,GetItemInfo(itemId)) ~= "Armor" then return false end
+
+	local itemName = itemLink:match("%[.*")
+	local resistIndicator = {
+		"Resistance",
+		"Protection"
+	}
+	local typeIndicator = {
+		"Arcane",
+		"Fire",
+		"Nature",
+		"Frost",
+		"Shadow"
+	}
+	for _, resInd in ipairs(resistIndicator) do
+		--item name includes resistance or protection
+		if string.find(itemName, resInd) then
+			for _, resType in ipairs(typeIndicator) do
+				--item name includes any spell school
+				if  string.find(itemName, resType) then
+					--item is a resistance piece
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
+
+
 local function ContainerFrame_OnUpdate(self, elapsed)
 	local itemLink = GetContainerItemLink(self:GetParent():GetID(), self:GetID())
 	
@@ -76,9 +108,11 @@ local function ContainerFrame_OnUpdate(self, elapsed)
 	if not itemLink then self.attune:SetText() return end
 	local itemId = tonumber(itemLink:match('item:(%d+)'))
 
+	--item is resist gear
+	if IsResistArmor(itemLink,itemId) then self.attune:SetText("Resist") return end
 	--item not attunable
 	if not SynastriaCoreLib.IsAttunable(itemId) then self.attune:SetText() return end
-	
+
 	self.attune:SetText(GetAttuneText(itemId))
 end
 local function CharacterFrame_OnUpdate(self, elapsed)
