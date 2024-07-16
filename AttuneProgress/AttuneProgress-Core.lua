@@ -1,6 +1,9 @@
 --[[
 todo:
 
+double check weapons
+properly handle affix items
+
 options
 	font
 	size
@@ -11,6 +14,12 @@ options
 	grey out attuned items
 
 ]]
+
+local CONST_ADDON_NAME = 'AttuneProgressGescht'
+AttuneProgressGescht = LibStub('AceAddon-3.0'):NewAddon(CONST_ADDON_NAME)
+
+local SynastriaCoreLib = LibStub('SynastriaCoreLib-1.0')
+
 
 local CharacterSlots = {
 	CharacterHeadSlot,
@@ -49,22 +58,24 @@ itemId = GetInventoryItemID("player", invSlot);
 	local itemType = select(6,GetItemInfo(itemLink))
 	local itemSubType = select(7,GetItemInfo(itemLink))
 
-SynastriaCoreLib.GetAttune(itemId)
-return ItemAttuneHas[itemId] or 0
+SynastriaCoreLib.GetAttuneProgress(itemIdOrLink, suffixId, forgedType)
+return GetItemAttuneProgress(itemId, suffixId, forgedType) or 0
 
-SynastriaCoreLib.IsAttuned(itemId)
-return SynastriaCoreLib.GetAttune(itemId) >= 100
+SynastriaCoreLib.IsAttuned(itemIdOrLink)
+	local ret = SynastriaCoreLib.GetAttuneProgress(itemIdOrLink)
+return ret >= 100
 
-SynastriaCoreLib.IsAttunable(itemId)
-return SynastriaCoreLib.IsItemValid(itemId) and not SynastriaCoreLib.IsAttuned(itemId)
+SynastriaCoreLib.IsAttunable(itemIdOrLink)
+return SynastriaCoreLib.IsItemValid(itemId) and not SynastriaCoreLib.IsAttuned(itemIdOrLink)
 
-SynastriaCoreLib.HasAttuneProgress(itemId)
-return SynastriaCoreLib.IsItemValid(itemId) and SynastriaCoreLib.GetAttune(itemId) > 0 and not SynastriaCoreLib.IsAttuned(itemId)
+SynastriaCoreLib.HasAttuneProgress(itemIdOrLink)
+	local ret = SynastriaCoreLib.GetAttuneProgress(itemIdOrLink)
+return ret > 0 and ret < 100
 
 ]]
 
 local function GetAttuneText(itemId)
-	local attunePercent = SynastriaCoreLib.GetAttune(itemId)
+	local attunePercent = SynastriaCoreLib.GetAttuneProgress(itemId)
 	attunePercent = attunePercent - (attunePercent % 1)
 	return attunePercent.."%"
 end

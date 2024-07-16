@@ -2,7 +2,7 @@
 ## Title: AttuneProgress
 ## Notes: Displays attunement progress on the item's icon in the equipment slots.
 ## Author: Gescht
-## Version: 1.1.4
+## Version: 1.2.0
 
 #@no-lib-strip@
 Libs\LibStub\LibStub.lua
@@ -11,7 +11,6 @@ Libs\AceAddon-3.0\AceAddon-3.0.xml
 Libs\AceConfig-3.0\AceConfig-3.0.xml
 Libs\AceDB-3.0\AceDB-3.0.xml
 Libs\AceHook-3.0\AceHook-3.0.xml
-Libs\SynastriaCoreLib\SynastriaCoreLib.lua
 #@end-no-lib-strip@
 
 AttuneProgress-Core.lua
