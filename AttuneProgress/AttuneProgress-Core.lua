@@ -82,13 +82,16 @@ end
 
 local function IsResistArmor(itemLink,itemId)
 	--item is not armor
+	--only armor can roll resistance as a random enchant
 	if select(6,GetItemInfo(itemId)) ~= "Armor" then return false end
 
 	local itemName = itemLink:match("%[.*")
+	--the only 2 types of names for resistance random enchant
 	local resistIndicator = {
 		"Resistance",
 		"Protection"
 	}
+	--the spell types of names for resistance random enchant
 	local typeIndicator = {
 		"Arcane",
 		"Fire",
