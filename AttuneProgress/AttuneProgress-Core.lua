@@ -127,8 +127,8 @@ local function ContainerFrame_OnUpdate(self, elapsed)
 	self.attune:SetText(GetAttuneText(itemId))
 end
 local function CharacterFrame_OnUpdate(self, elapsed)
-	--shirt slot or mainhand weapon slot
-	if self.id == 4 or self.id == 16 then self.attune:SetText() return end
+	--shirt slot
+	if self.id == 4 then self.attune:SetText() return end
 	
 	local itemLink = GetInventoryItemLink("player", self.id)
 	--no item equipped
