@@ -58,24 +58,35 @@ itemId = GetInventoryItemID("player", invSlot);
 	local itemType = select(6,GetItemInfo(itemLink))
 	local itemSubType = select(7,GetItemInfo(itemLink))
 
+
+SynastriaCoreLib.ItemHasRandomSuffix(itemId)
+    true if
+		item has a random suffix
+
 SynastriaCoreLib.GetAttuneProgress(itemIdOrLink, suffixId, forgedType)
-return GetItemAttuneProgress(itemId, suffixId, forgedType) or 0
+	return attune prog
 
 SynastriaCoreLib.IsAttuned(itemIdOrLink)
-	local ret = SynastriaCoreLib.GetAttuneProgress(itemIdOrLink)
-return ret >= 100
+	true if
+		item is fully attuned
 
-SynastriaCoreLib.IsAttunable(itemIdOrLink)
-return SynastriaCoreLib.IsItemValid(itemId) and not SynastriaCoreLib.IsAttuned(itemIdOrLink)
+SynastriaCoreLib.IsItemValid(itemIdOrLink)
+	true if 
+		item is valid to be potentially attuned
 
 SynastriaCoreLib.HasAttuneProgress(itemIdOrLink)
-	local ret = SynastriaCoreLib.GetAttuneProgress(itemIdOrLink)
-return ret > 0 and ret < 100
+	true if attunement in prog
+
+SynastriaCoreLib.IsAttunable(itemIdOrLink)
+	true if 
+		IsItemValid
+			AND
+		not IsAttuned
 
 ]]
 
-local function GetAttuneText(itemId)
-	local attunePercent = SynastriaCoreLib.GetAttuneProgress(itemId)
+local function GetAttuneText(itemLink)
+	local attunePercent = SynastriaCoreLib.GetAttuneProgress(itemLink)
 	attunePercent = attunePercent - (attunePercent % 1)
 	return attunePercent.."%"
 end
@@ -125,9 +136,9 @@ local function ContainerFrame_OnUpdate(self, elapsed)
 	--item is resist gear
 	if IsResistArmor(itemLink,itemId) then self.attune:SetText("Resist") return end
 	--item not attunable
-	if not SynastriaCoreLib.IsAttunable(itemId) then self.attune:SetText() return end
+	if not SynastriaCoreLib.IsAttunable(itemLink) then self.attune:SetText() return end
 
-	self.attune:SetText(GetAttuneText(itemId))
+	self.attune:SetText(GetAttuneText(itemLink))
 end
 local function CharacterFrame_OnUpdate(self, elapsed)
 	--shirt slot
@@ -139,9 +150,9 @@ local function CharacterFrame_OnUpdate(self, elapsed)
 	local itemId = GetInventoryItemID("player", self.id)
 
 	--item not attunable
-	if not SynastriaCoreLib.IsAttunable(itemId) then self.attune:SetText() return end
+	if not SynastriaCoreLib.IsAttunable(itemLink) then self.attune:SetText() return end
 
-	self.attune:SetText(GetAttuneText(itemId))
+	self.attune:SetText(GetAttuneText(itemLink))
 end
 
 for i=1,NUM_CONTAINER_FRAMES do
@@ -155,7 +166,7 @@ for i=1,NUM_CONTAINER_FRAMES do
 	end
 end
 for i=1,#CharacterSlots do
-	frame = CharacterSlots[i]
+	local frame = CharacterSlots[i]
 	frame.id = i
 	frame.attune = frame:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
 	frame.attune:SetPoint("BOTTOM", 1, 1)
