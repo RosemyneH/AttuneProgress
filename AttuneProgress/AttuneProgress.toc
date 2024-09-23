@@ -12,7 +12,7 @@ Libs\AceConfig-3.0\AceConfig-3.0.xml
 Libs\AceDB-3.0\AceDB-3.0.xml
 Libs\AceHook-3.0\AceHook-3.0.xml
 Libs\CallbackHandler-1.0\CallbackHandler-1.0.xml
-Libs\LibDataBroker-1.1\LibDataBroker-1.1.xml
+Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
 Libs\SynastriaCoreLib-1.0\SynastriaCoreLib-1.0.xml
 #@end-no-lib-strip@
 
