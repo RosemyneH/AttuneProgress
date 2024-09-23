@@ -1,5 +1,5 @@
 local _, NS = ...
-local MODULE_NAME, MODULE_VERSION = 'LDB', 5
+local MODULE_NAME, MODULE_VERSION = 'LDB', 6
 
 NS.DebugLog(MODULE_NAME, MODULE_VERSION, 'Start')
 if not NS.loaded then return end
@@ -39,7 +39,7 @@ local function GetTopInProgress(maxNum)
         if count >= maxNum then break end
     end
 
-    return ret, ('%d %%'):format(total / count), count
+    return ret, ('%d %%'):format(total / math.max(1, count)), count
 end
 
 local function GetActiveTasks(maxNum)

@@ -1,5 +1,5 @@
 local _, NS = ...
-local MODULE_NAME, MODULE_VERSION = 'Attunement', 5
+local MODULE_NAME, MODULE_VERSION = 'Attunement', 6
 
 NS.DebugLog(MODULE_NAME, MODULE_VERSION, 'Start')
 if not NS.loaded then return end
@@ -119,7 +119,7 @@ function SynastriaCoreLib.HasAttuneProgress(itemIdOrLink)
 end
 
 function SynastriaCoreLib.InProgressItems()
-    if not SynastriaCoreLib.isLoaded() then return nil, nil end
+    if not SynastriaCoreLib.isLoaded() then return function() end, nil end
 
     local nxt, t, r = SynastriaCoreLib.AllCustomGameData(
         SynastriaCoreLib.CustomDataTypes.ATTUNE_HAS,
