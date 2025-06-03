@@ -13,13 +13,69 @@ local CONST_ADDON_NAME = 'AttuneProgress'
 AttuneProgress = {}
 
 -- Settings with defaults
-local Settings = {
-    showRedForNonAttunable = true, -- Show red bars for items not attunable by character but attunable by account
-    showBountyIcons = true, -- Show bounty icons
-    showAccountIcons = true, -- Show account attunable icons
-    showProgressText = true, -- Show percentage text
-    showAccountAttuneText = false, -- Controls if "Acc" text appears for account-attunable items
+local DefaultSettings = {
+    showRedForNonAttunable = true,
+    showBountyIcons = true,
+    showAccountIcons = false,
+    showProgressText = true,
+    showAccountAttuneText = false,
+    faeMode = false,
+    
+    -- Color settings (RGB values 0-1)
+    progressBarColor = {r = 1.0, g = 1.0, b = 0.0}, -- Yellow
+    nonAttunableBarColor = {r = 1.0, g = 0.0, b = 0.0}, -- Red
 }
+local Settings = {}
+
+local function LoadSettings()
+    -- Initialize the SavedVariable if it doesn't exist
+    if not AttuneProgressDB then
+        AttuneProgressDB = {}
+    end
+    
+    -- Deep copy defaults first
+    for key, value in pairs(DefaultSettings) do
+        if type(value) == "table" then
+            Settings[key] = {}
+            for subkey, subvalue in pairs(value) do
+                Settings[key][subkey] = subvalue
+            end
+        else
+            Settings[key] = value
+        end
+    end
+    
+    -- Override with saved settings
+    for key, value in pairs(AttuneProgressDB) do
+        if type(value) == "table" and type(Settings[key]) == "table" then
+            -- Merge table values (like colors)
+            for subkey, subvalue in pairs(value) do
+                Settings[key][subkey] = subvalue
+            end
+        else
+            Settings[key] = value
+        end
+    end
+end
+
+-- Function to save current settings
+local function SaveSettings()
+    if not AttuneProgressDB then
+        AttuneProgressDB = {}
+    end
+    
+    -- Deep copy current settings to SavedVariables
+    for key, value in pairs(Settings) do
+        if type(value) == "table" then
+            AttuneProgressDB[key] = {}
+            for subkey, subvalue in pairs(value) do
+                AttuneProgressDB[key][subkey] = subvalue
+            end
+        else
+            AttuneProgressDB[key] = value
+        end
+    end
+end
 
 -- Configuration
 local CONFIG = {
@@ -28,13 +84,17 @@ local CONFIG = {
         MIN_HEIGHT_PERCENT = 0.2, -- 20% of item height at 0% progress
         MAX_HEIGHT_PERCENT = 1.0, -- 100% of item height at 100% progress
         BACKGROUND_COLOR = {0, 0, 0, 1}, -- Black background
-        PROGRESS_COLOR = {1, 1, 0, 1}, -- Yellow for progress
-        NON_ATTUNABLE_COLOR = {1, 0, 0, 1}, -- Red for non-attunable by character but attunable by account
+        PROGRESS_COLOR = {1, 1, 0, 1}, -- Yellow for progress (will be updated from settings)
+        NON_ATTUNABLE_COLOR = {1, 0, 0, 1}, -- Red for non-attunable by character but attunable by account (will be updated from settings)
     },
     BOUNTY_ICON = {
         SIZE = 16,
         TEXTURE = 'Interface/MoneyFrame/UI-GoldIcon',
     },
+	RESIST_ICON = {
+		SIZE = 16,
+		TEXTURE = 'Interface\\Addons\\AttuneProgress\\assets\\ScenarioIcon-Combat.blp', -- Using bounty icon as placeholder
+	},
     ACCOUNT_ICON = {
         SIZE = 8,
         COLOR = {0.3, 0.7, 1.0, 0.8}, -- Light blue
@@ -45,6 +105,22 @@ local CONFIG = {
         ACCOUNT_COLOR = {0.3, 0.7, 1.0}, -- Light blue for "Acc" text
     }
 }
+
+-- Function to update CONFIG colors from Settings
+local function UpdateConfigColors()
+    CONFIG.PROGRESS_BAR.PROGRESS_COLOR = {
+        Settings.progressBarColor.r,
+        Settings.progressBarColor.g,
+        Settings.progressBarColor.b,
+        1
+    }
+    CONFIG.PROGRESS_BAR.NON_ATTUNABLE_COLOR = {
+        Settings.nonAttunableBarColor.r,
+        Settings.nonAttunableBarColor.g,
+        Settings.nonAttunableBarColor.b,
+        1
+    }
+end
 
 -- Bagnon Guild Bank Slots
 local BagnonGuildBankSlots = {}
@@ -214,6 +290,31 @@ local function SetFrameAccountIcon(frame, itemId)
     end
 end
 
+local function SetFrameResistIcon(frame, itemLink, itemId)
+    local resistFrameName = frame:GetName() .. '_Resist'
+    local resistFrame = _G[resistFrameName]
+
+    if itemLink and itemId and IsItemResistArmor(itemLink, itemId) then
+        if not resistFrame then
+            resistFrame = CreateFrame('Frame', resistFrameName, frame)
+            resistFrame:SetWidth(CONFIG.RESIST_ICON.SIZE)
+            resistFrame:SetHeight(CONFIG.RESIST_ICON.SIZE)
+            resistFrame:SetFrameLevel(frame:GetFrameLevel() + 1)
+            resistFrame.texture = resistFrame:CreateTexture(
+                nil,
+                'OVERLAY'
+            ) -- Set strata to OVERLAY for texture
+            resistFrame.texture:SetAllPoints()
+            resistFrame.texture:SetTexture(CONFIG.RESIST_ICON.TEXTURE)
+        end
+        resistFrame:SetParent(frame)
+        resistFrame:SetPoint('TOP', frame, 'TOP', 0, -2) -- Top center position
+        resistFrame:Show()
+    elseif resistFrame then
+        resistFrame:Hide()
+    end
+end
+
 local function SetFrameAttunement(frame, itemLink)
     local itemId = GetItemIDFromLink(itemLink)
     local progressFrameName = frame:GetName() .. '_attuneBar'
@@ -242,49 +343,47 @@ local function SetFrameAttunement(frame, itemLink)
     local showBar = false
     local barColor = CONFIG.PROGRESS_BAR.PROGRESS_COLOR
 
-    if IsItemResistArmor(itemLink, itemId) then
-        frame.attuneText:SetText("Resist")
-        return
-    end
+    -- Check for resist armor
+	-- local isResistArmor = IsItemResistArmor(itemLink, itemId)
 
     if attunableByCharacter then
-        if attuneProgress < 100 then
-            -- Show yellow progress bar for incomplete items (0-99%)
-            showBar = true
-            barColor = CONFIG.PROGRESS_BAR.PROGRESS_COLOR -- Yellow
-            if Settings.showProgressText then
-                frame.attuneText:SetText(
-                    string.format("%.0f%%", attuneProgress)
-                ) -- Show percentage text
-            end
-        end
-        -- No bar or text for 100% completed by character
-    elseif Settings.showRedForNonAttunable and attunableByAccount then
-        -- Item is attunable by account but not by this character
-        if attuneProgress < 100 then
-            -- Show red bar if not fully attuned
-            showBar = true
-            barColor = CONFIG.PROGRESS_BAR.NON_ATTUNABLE_COLOR -- Red
-            if Settings.showProgressText and attuneProgress > 0 then
-                frame.attuneText:SetText(string.format("%.0f%%", attuneProgress))
-            elseif Settings.showAccountAttuneText then
-                frame.attuneText:SetText("Acc")
-                frame.attuneText:SetTextColor(
-                    CONFIG.TEXT.ACCOUNT_COLOR[1],
-                    CONFIG.TEXT.ACCOUNT_COLOR[2],
-                    CONFIG.TEXT.ACCOUNT_COLOR[3]
-                )
-            end
-        elseif Settings.showAccountAttuneText then
-            -- If 100% attuned by account but not by character, still show "Acc" if enabled
-            frame.attuneText:SetText("Acc")
-            frame.attuneText:SetTextColor(
-                CONFIG.TEXT.ACCOUNT_COLOR[1],
-                CONFIG.TEXT.ACCOUNT_COLOR[2],
-                CONFIG.TEXT.ACCOUNT_COLOR[3]
-            )
-        end
-    end
+		-- In Fae Mode, show bars even at 100%. Otherwise, only show bars below 100%
+		if Settings.faeMode or attuneProgress < 100 then
+			showBar = true
+			barColor = CONFIG.PROGRESS_BAR.PROGRESS_COLOR -- Character color
+			if Settings.showProgressText then
+				if isResistArmor then
+					frame.attuneText:SetText("Resist " .. string.format("%.0f%%", attuneProgress))
+				else
+					frame.attuneText:SetText(string.format("%.0f%%", attuneProgress))
+				end
+			elseif isResistArmor then
+				frame.attuneText:SetText("Resist")
+			end
+		elseif isResistArmor then
+			frame.attuneText:SetText("Resist")
+		end
+	elseif Settings.showRedForNonAttunable and attunableByAccount then
+		-- ... existing code ...
+		if Settings.showProgressText and attuneProgress > 0 then
+			if isResistArmor then
+				frame.attuneText:SetText("Resist " .. string.format("%.0f%%", attuneProgress))
+			else
+				frame.attuneText:SetText(string.format("%.0f%%", attuneProgress))
+			end
+		elseif Settings.showAccountAttuneText then
+			if isResistArmor then
+				frame.attuneText:SetText("Resist Acc")
+			else
+				frame.attuneText:SetText("Acc")
+			end
+			-- ... existing color code ...
+		elseif isResistArmor then
+			frame.attuneText:SetText("Resist")
+		end
+	elseif isResistArmor then
+		frame.attuneText:SetText("Resist")
+	end
 
     if showBar then
         if not progressFrame then
@@ -306,7 +405,7 @@ local function SetFrameAttunement(frame, itemLink)
             progressFrame.child = CreateFrame('Frame', progressFrameName .. 'Child', progressFrame)
             progressFrame.child:SetWidth(CONFIG.PROGRESS_BAR.WIDTH)
             progressFrame.child:SetFrameLevel(progressFrame:GetFrameLevel() + 1)
-            progressFrame.child:SetPoint('BOTTOMLEFT', progressFrame, 'BOTTOMLEFT', 0, 0)
+            progressFrame.child:SetPoint('BOTTOMLEFT', progressFrame, 'BOTTOMLEFT', -1, -1)
             progressFrame.child.texture = progressFrame.child:CreateTexture(
                 nil,
                 'OVERLAY'
@@ -351,6 +450,8 @@ local function UpdateItemDisplay(frame, itemLink)
     if bountyFrame then bountyFrame:Hide() end
     local iconFrame = _G[frame:GetName() .. '_Account']
     if iconFrame then iconFrame:Hide() end
+    local resistFrameName = frame:GetName() .. '_Resist'
+	if _G[resistFrameName] then _G[resistFrameName]:Hide() end
     if frame.attuneText then frame.attuneText:SetText("") end
 
     -- If no item link, ensure everything is hidden and return
@@ -359,6 +460,7 @@ local function UpdateItemDisplay(frame, itemLink)
     -- Update all displays based on current item link and ID
     SetFrameBounty(frame, itemLink)
     SetFrameAccountIcon(frame, itemId)
+    SetFrameResistIcon(frame, itemLink, itemId)  -- Add this line
     SetFrameAttunement(frame, itemLink)
 end
 
@@ -485,6 +587,7 @@ end
 
 -- Options Panel Creation
 local function CreateOptionsPanel()
+    -- Main Panel
     local panel = CreateFrame("Frame")
     panel.name = CONST_ADDON_NAME
 
@@ -495,17 +598,14 @@ local function CreateOptionsPanel()
 
     -- Checkbutton helper function
     local function CreateCheckbox(parent, text, settingKey, anchorFrame, offsetY)
-        -- Create a unique name for the checkbox
         local checkboxName = "AttuneProgressCheckbox_" .. settingKey
         local cb = CreateFrame("CheckButton", checkboxName, parent, "InterfaceOptionsCheckButtonTemplate")
         cb:SetPoint("TOPLEFT", anchorFrame, "BOTTOMLEFT", 0, offsetY)
         
-        -- This line accesses the text element created by the template.
         local textObject = _G[cb:GetName() .. "Text"]
         if textObject then
             textObject:SetText(text)
         else
-            -- Fallback: try to find the text object by iterating through children
             for i = 1, cb:GetNumRegions() do
                 local region = select(i, cb:GetRegions())
                 if region and region:GetObjectType() == "FontString" then
@@ -514,67 +614,75 @@ local function CreateOptionsPanel()
                 end
             end
         end
-
+    
         cb:SetChecked(Settings[settingKey])
         cb:SetScript("OnClick", function(self)
             Settings[settingKey] = self:GetChecked()
-            -- Force a redraw of all items when settings change
+            SaveSettings() -- Save when changed
             AttuneProgress:ForceUpdateAllDisplays()
         end)
         return cb
     end
 
-    -- Initialize lastCheckbox with the title frame for the first checkbox's anchor
-    local lastCheckbox = title
+    local lastElement = title
 
     -- Red Bars Checkbox
-    lastCheckbox = CreateCheckbox(
+    lastElement = CreateCheckbox(
         panel,
         "Show red bars for account-attunable items (not by character)",
         "showRedForNonAttunable",
-        lastCheckbox,
-        -20 -- First checkbox needs a larger offset from the title
+        lastElement,
+        -20
     )
 
     -- Bounty Icons Checkbox
-    lastCheckbox = CreateCheckbox(
+    lastElement = CreateCheckbox(
         panel,
         "Show bounty icons",
         "showBountyIcons",
-        lastCheckbox,
+        lastElement,
         -10
     )
 
     -- Account Icons Checkbox
-    lastCheckbox = CreateCheckbox(
+    lastElement = CreateCheckbox(
         panel,
         "Show account-attunable icon (blue square)",
         "showAccountIcons",
-        lastCheckbox,
+        lastElement,
         -10
     )
 
     -- Progress Text Checkbox
-    lastCheckbox = CreateCheckbox(
+    lastElement = CreateCheckbox(
         panel,
         "Show progress percentage text",
         "showProgressText",
-        lastCheckbox,
+        lastElement,
         -10
     )
 
     -- Show "Acc" text for account-attunable items
-    lastCheckbox = CreateCheckbox(
+    lastElement = CreateCheckbox(
         panel,
         "Show 'Acc' text for account-attunable items",
         "showAccountAttuneText",
-        lastCheckbox,
+        lastElement,
+        -10
+    )
+
+    -- Fae Mode Checkbox
+    lastElement = CreateCheckbox(
+        panel,
+        "Fae Mode - Show bars even at 100% completion",
+        "faeMode",
+        lastElement,
         -10
     )
 
     -- Description
     local description = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    description:SetPoint("TOPLEFT", lastCheckbox, "BOTTOMLEFT", 0, -30)
+    description:SetPoint("TOPLEFT", lastElement, "BOTTOMLEFT", 0, -30)
     description:SetWidth(500)
     description:SetJustifyH("LEFT")
     description:SetText(
@@ -584,8 +692,10 @@ local function CreateOptionsPanel()
             "Gold icons: Bountied items.\n" ..
             "Blue squares: Account-attunable items.\n" ..
             "'Acc' text: Items attunable by account, not by your character (when enabled).\n" ..
-            "'Resist' text: Resistance armor items.\n\n" ..
-            "Supported: Blizzard bags, ElvUI bags, AdiBags, Bagnon Guild Bank"
+            "'Resist' text: Resistance armor items.\n" ..
+            "Fae Mode: Always show bars, even at 100% completion.\n\n" ..
+            "Supported: Blizzard bags, ElvUI bags, AdiBags, Bagnon Guild Bank\n\n" ..
+            "Check the 'Colors' subcategory to customize bar colors."
     )
 
     -- Add to Blizzard Interface Options
@@ -594,6 +704,135 @@ local function CreateOptionsPanel()
     end
 
     return panel
+end
+
+local function CreateColorOptionsPanel()
+    -- Color Panel
+    local colorPanel = CreateFrame("Frame")
+    colorPanel.name = "Colors"
+    colorPanel.parent = CONST_ADDON_NAME
+
+    -- Title
+    local colorTitle = colorPanel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+    colorTitle:SetPoint("TOPLEFT", 16, -16)
+    colorTitle:SetText(CONST_ADDON_NAME .. " - Color Settings")
+
+    -- Color slider helper function
+    local function CreateColorSlider(parent, text, colorTable, colorKey, anchorFrame, offsetY)
+        local label = parent:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+        label:SetPoint("TOPLEFT", anchorFrame, "BOTTOMLEFT", 0, offsetY)
+        label:SetText(text)
+
+        local sliderFrame = CreateFrame("Frame", nil, parent)
+        sliderFrame:SetPoint("TOPLEFT", label, "BOTTOMLEFT", 0, -5)
+        sliderFrame:SetSize(200, 60)
+
+        -- Generate unique names for the sliders
+        local uniqueId = colorKey .. "_" .. math.random(1000, 9999)
+
+        -- Red slider
+        local redSlider = CreateFrame("Slider", "AttuneProgressRedSlider_" .. uniqueId, sliderFrame, "OptionsSliderTemplate")
+        redSlider:SetPoint("TOPLEFT", sliderFrame, "TOPLEFT", 0, 0)
+        redSlider:SetSize(180, 15)
+        redSlider:SetMinMaxValues(0, 1)
+        redSlider:SetValue(colorTable[colorKey].r)
+        redSlider:SetValueStep(0.01)
+        _G[redSlider:GetName().."Low"]:SetText("0")
+        _G[redSlider:GetName().."High"]:SetText("1")
+        _G[redSlider:GetName().."Text"]:SetText("Red: " .. string.format("%.2f", colorTable[colorKey].r))
+
+        -- Green slider
+        local greenSlider = CreateFrame("Slider", "AttuneProgressGreenSlider_" .. uniqueId, sliderFrame, "OptionsSliderTemplate")
+        greenSlider:SetPoint("TOPLEFT", redSlider, "BOTTOMLEFT", 0, -20)
+        greenSlider:SetSize(180, 15)
+        greenSlider:SetMinMaxValues(0, 1)
+        greenSlider:SetValue(colorTable[colorKey].g)
+        greenSlider:SetValueStep(0.01)
+        _G[greenSlider:GetName().."Low"]:SetText("0")
+        _G[greenSlider:GetName().."High"]:SetText("1")
+        _G[greenSlider:GetName().."Text"]:SetText("Green: " .. string.format("%.2f", colorTable[colorKey].g))
+
+        -- Blue slider
+        local blueSlider = CreateFrame("Slider", "AttuneProgressBlueSlider_" .. uniqueId, sliderFrame, "OptionsSliderTemplate")
+        blueSlider:SetPoint("TOPLEFT", greenSlider, "BOTTOMLEFT", 0, -20)
+        blueSlider:SetSize(180, 15)
+        blueSlider:SetMinMaxValues(0, 1)
+        blueSlider:SetValue(colorTable[colorKey].b)
+        blueSlider:SetValueStep(0.01)
+        _G[blueSlider:GetName().."Low"]:SetText("0")
+        _G[blueSlider:GetName().."High"]:SetText("1")
+        _G[blueSlider:GetName().."Text"]:SetText("Blue: " .. string.format("%.2f", colorTable[colorKey].b))
+
+        -- Color preview
+        local colorPreview = CreateFrame("Frame", nil, sliderFrame)
+        colorPreview:SetPoint("TOPRIGHT", sliderFrame, "TOPRIGHT", 0, 0)
+        colorPreview:SetSize(15, 45)
+        colorPreview.texture = colorPreview:CreateTexture(nil, "BACKGROUND")
+        colorPreview.texture:SetAllPoints()
+        colorPreview.texture:SetTexture(colorTable[colorKey].r, colorTable[colorKey].g, colorTable[colorKey].b, 1)
+
+        local function UpdateColor()
+            colorTable[colorKey].r = redSlider:GetValue()
+            colorTable[colorKey].g = greenSlider:GetValue()
+            colorTable[colorKey].b = blueSlider:GetValue()
+            colorPreview.texture:SetTexture(colorTable[colorKey].r, colorTable[colorKey].g, colorTable[colorKey].b, 1)
+            _G[redSlider:GetName().."Text"]:SetText("Red: " .. string.format("%.2f", colorTable[colorKey].r))
+            _G[greenSlider:GetName().."Text"]:SetText("Green: " .. string.format("%.2f", colorTable[colorKey].g))
+            _G[blueSlider:GetName().."Text"]:SetText("Blue: " .. string.format("%.2f", colorTable[colorKey].b))
+            UpdateConfigColors()
+            SaveSettings() -- Save when changed
+            AttuneProgress:ForceUpdateAllDisplays()
+        end
+
+        redSlider:SetScript("OnValueChanged", UpdateColor)
+        greenSlider:SetScript("OnValueChanged", UpdateColor)
+        blueSlider:SetScript("OnValueChanged", UpdateColor)
+
+        return sliderFrame
+    end
+
+    local lastElement = colorTitle
+
+    -- Character Progress Bar Color
+    lastElement = CreateColorSlider(
+        colorPanel,
+        "Character-attunable progress bar color:",
+        Settings,
+        "progressBarColor",
+        lastElement,
+        -25
+    )
+
+    -- Account Progress Bar Color
+    lastElement = CreateColorSlider(
+        colorPanel,
+        "Account-attunable progress bar color:",
+        Settings,
+        "nonAttunableBarColor",
+        lastElement,
+        -85
+    )
+
+    -- Color Description
+    local colorDescription = colorPanel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    colorDescription:SetPoint("TOPLEFT", lastElement, "BOTTOMLEFT", 0, -90)
+    colorDescription:SetWidth(500)
+    colorDescription:SetJustifyH("LEFT")
+    colorDescription:SetText(
+        "Customize the colors of the attunement progress bars.\n\n" ..
+            "Character-attunable: For items your current character can attune.\n" ..
+            "Account-attunable: For items attunable by other characters on your account.\n\n" ..
+            "Use the RGB sliders to adjust each color component (0.0 to 1.0).\n" ..
+            "The colored square shows a preview of your selected color.\n" ..
+            "Changes are applied immediately to all visible items."
+    )
+
+    -- Add to Blizzard Interface Options as subcategory
+    if InterfaceOptions_AddCategory then
+        InterfaceOptions_AddCategory(colorPanel)
+    end
+
+    return colorPanel
 end
 
 -- WotLK compatible timer function
@@ -626,9 +865,14 @@ local function PeriodicFrameHooking()
 end
 
 -- Event Management
+-- Event Management (updated)
 local function OnEvent(self, event, ...)
     if event == "ADDON_LOADED" and ... == CONST_ADDON_NAME then
         self:UnregisterEvent("ADDON_LOADED")
+        
+        -- Load settings from SavedVariables
+        LoadSettings()
+        
         -- Delay initialization slightly to ensure all frames are loaded
         DelayedCall(0.1, function()
             AttuneProgress:Initialize()
@@ -640,7 +884,6 @@ local function OnEvent(self, event, ...)
         end)
     end
 end
-
 local eventFrame = CreateFrame("Frame", "AttuneProgressEventFrame", UIParent)
 eventFrame:SetScript("OnEvent", OnEvent)
 eventFrame:RegisterEvent("ADDON_LOADED")
@@ -651,16 +894,17 @@ eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 function AttuneProgress:Initialize()
     print("|cff00ff00AttuneProgress|r: Initializing...")
 
-    -- Create options panel
+    -- Update CONFIG colors from settings on initialization
+    UpdateConfigColors()
+    -- Create both options panels
     CreateOptionsPanel()
-
+    CreateColorOptionsPanel()
     -- Enable updates always
     AttuneProgress:EnableUpdates()
-
     -- Start periodic frame hooking
     PeriodicFrameHooking()
 
-    print("|cff00ff00AttuneProgress|r: Enhanced attunement display loaded and enabled!")
+    --print("|cff00ff00AttuneProgress|r: Enhanced attunement display loaded and enabled!")
     print(
         "|cff00ff00AttuneProgress|r: Use /ap for commands or check Interface > AddOns > " ..
             CONST_ADDON_NAME .. " for options."
@@ -723,34 +967,38 @@ end
 function AttuneProgress:DisableUpdates()
     -- Hide all existing bars and icons
     for i = 1, NUM_CONTAINER_FRAMES do
-        for j = 1, 36 do
-            local frame = _G["ContainerFrame" .. i .. "Item" .. j]
-            if frame and frame:GetName() then
-                local progressFrameName = frame:GetName() .. '_attuneBar'
-                local bountyFrameName = frame:GetName() .. '_Bounty'
-                local iconFrameName = frame:GetName() .. '_Account'
-
-                if _G[progressFrameName] then _G[progressFrameName]:Hide() end
-                if _G[bountyFrameName] then _G[bountyFrameName]:Hide() end
-                if _G[iconFrameName] then _G[iconFrameName]:Hide() end
-                if frame.attuneText then frame.attuneText:SetText("") end
-            end
-        end
-    end
+		for j = 1, 36 do
+			local frame = _G["ContainerFrame" .. i .. "Item" .. j]
+			if frame and frame:GetName() then
+				local progressFrameName = frame:GetName() .. '_attuneBar'
+				local bountyFrameName = frame:GetName() .. '_Bounty'
+				local iconFrameName = frame:GetName() .. '_Account'
+				local resistFrameName = frame:GetName() .. '_Resist'
+	
+				if _G[progressFrameName] then _G[progressFrameName]:Hide() end
+				if _G[bountyFrameName] then _G[bountyFrameName]:Hide() end
+				if _G[iconFrameName] then _G[iconFrameName]:Hide() end
+				if _G[resistFrameName] then _G[resistFrameName]:Hide() end 
+				if frame.attuneText then frame.attuneText:SetText("") end
+			end
+		end
+	end
 
     -- Hide ElvUI displays
     for i = 1, #ElvUIContainerSlots do
         local frameName = ElvUIContainerSlots[i]
         local frame = _G[frameName]
         if frame and frame:GetName() then
-            local progressFrameName = frame:GetName() .. '_attuneBar'
-            local bountyFrameName = frame:GetName() .. '_Bounty'
-            local iconFrameName = frame:GetName() .. '_Account'
+			local progressFrameName = frame:GetName() .. '_attuneBar'
+			local bountyFrameName = frame:GetName() .. '_Bounty'
+			local iconFrameName = frame:GetName() .. '_Account'
+			local resistFrameName = frame:GetName() .. '_Resist'
 
-            if _G[progressFrameName] then _G[progressFrameName]:Hide() end
-            if _G[bountyFrameName] then _G[bountyFrameName]:Hide() end
-            if _G[iconFrameName] then _G[iconFrameName]:Hide() end
-            if frame.attuneText then frame.attuneText:SetText("") end
+			if _G[progressFrameName] then _G[progressFrameName]:Hide() end
+			if _G[bountyFrameName] then _G[bountyFrameName]:Hide() end
+			if _G[iconFrameName] then _G[iconFrameName]:Hide() end
+			if _G[resistFrameName] then _G[resistFrameName]:Hide() end 
+			if frame.attuneText then frame.attuneText:SetText("") end
         end
     end
 
@@ -759,14 +1007,16 @@ function AttuneProgress:DisableUpdates()
         local frameName = AdiBagsSlots[i]
         local frame = _G[frameName]
         if frame and frame:GetName() then
-            local progressFrameName = frame:GetName() .. '_attuneBar'
-            local bountyFrameName = frame:GetName() .. '_Bounty'
-            local iconFrameName = frame:GetName() .. '_Account'
+			local progressFrameName = frame:GetName() .. '_attuneBar'
+			local bountyFrameName = frame:GetName() .. '_Bounty'
+			local iconFrameName = frame:GetName() .. '_Account'
+			local resistFrameName = frame:GetName() .. '_Resist'
 
-            if _G[progressFrameName] then _G[progressFrameName]:Hide() end
-            if _G[bountyFrameName] then _G[bountyFrameName]:Hide() end
-            if _G[iconFrameName] then _G[iconFrameName]:Hide() end
-            if frame.attuneText then frame.attuneText:SetText("") end
+			if _G[progressFrameName] then _G[progressFrameName]:Hide() end
+			if _G[bountyFrameName] then _G[bountyFrameName]:Hide() end
+			if _G[iconFrameName] then _G[iconFrameName]:Hide() end
+			if _G[resistFrameName] then _G[resistFrameName]:Hide() end 
+			if frame.attuneText then frame.attuneText:SetText("") end
         end
     end
 
@@ -775,14 +1025,16 @@ function AttuneProgress:DisableUpdates()
         local frameName = BagnonGuildBankSlots[i]
         local frame = _G[frameName]
         if frame and frame:GetName() then
-            local progressFrameName = frame:GetName() .. '_attuneBar'
-            local bountyFrameName = frame:GetName() .. '_Bounty'
-            local iconFrameName = frame:GetName() .. '_Account'
+			local progressFrameName = frame:GetName() .. '_attuneBar'
+			local bountyFrameName = frame:GetName() .. '_Bounty'
+			local iconFrameName = frame:GetName() .. '_Account'
+			local resistFrameName = frame:GetName() .. '_Resist'
 
-            if _G[progressFrameName] then _G[progressFrameName]:Hide() end
-            if _G[bountyFrameName] then _G[bountyFrameName]:Hide() end
-            if _G[iconFrameName] then _G[iconFrameName]:Hide() end
-            if frame.attuneText then frame.attuneText:SetText("") end
+			if _G[progressFrameName] then _G[progressFrameName]:Hide() end
+			if _G[bountyFrameName] then _G[bountyFrameName]:Hide() end
+			if _G[iconFrameName] then _G[iconFrameName]:Hide() end
+			if _G[resistFrameName] then _G[resistFrameName]:Hide() end 
+			if frame.attuneText then frame.attuneText:SetText("") end
         end
     end
 
@@ -856,6 +1108,7 @@ SlashCmdList["ATTUNEPROGRESS"] = function(msg)
         InterfaceOptionsFrame_OpenToCategory(CONST_ADDON_NAME)
     elseif cmd == "acc" then
         Settings.showAccountAttuneText = not Settings.showAccountAttuneText
+        SaveSettings() -- Save the change
         print(
             string.format(
                 "|cff00ff00AttuneProgress|r: Show 'Acc' text for account attunable items %s.",
@@ -863,10 +1116,21 @@ SlashCmdList["ATTUNEPROGRESS"] = function(msg)
             )
         )
         AttuneProgress:ForceUpdateAllDisplays()
+    elseif cmd == "fae" then
+        Settings.faeMode = not Settings.faeMode
+        SaveSettings() -- Save the change
+        print(
+            string.format(
+                "|cff00ff00AttuneProgress|r: Fae Mode %s.",
+                Settings.faeMode and "enabled" or "disabled"
+            )
+        )
+        AttuneProgress:ForceUpdateAllDisplays()
     else
         print("|cff00ff00AttuneProgress|r Commands:")
         print("  /ap refresh - Refresh all item displays")
         print("  /ap acc - Toggle 'Acc' text for account-attunable items")
+        print("  /ap fae - Toggle Fae Mode (show bars even at 100%)")
         print("  /ap options - Open options panel")
         print("")
         print("You can also access options via Interface > AddOns > " .. CONST_ADDON_NAME)

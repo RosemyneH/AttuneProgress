@@ -3,5 +3,6 @@
 ## Notes: Displays attunement progress on the item's icon in the equipment slots. (Removed SynCoreLib)
 ## Author: Qt, Gescht 
 ## Version: 2.0
+## SavedVariables: AttuneProgressDB
 
 AttuneProgress-Core.lua
