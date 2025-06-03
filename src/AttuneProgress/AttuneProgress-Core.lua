@@ -732,7 +732,7 @@ local function CreateColorOptionsPanel()
 
         -- Red slider
         local redSlider = CreateFrame("Slider", "AttuneProgressRedSlider_" .. uniqueId, sliderFrame, "OptionsSliderTemplate")
-        redSlider:SetPoint("TOPLEFT", sliderFrame, "TOPLEFT", 0, 0)
+        redSlider:SetPoint("TOPLEFT", sliderFrame, "TOPLEFT", 0, -10)
         redSlider:SetSize(180, 15)
         redSlider:SetMinMaxValues(0, 1)
         redSlider:SetValue(colorTable[colorKey].r)
@@ -754,7 +754,7 @@ local function CreateColorOptionsPanel()
 
         -- Blue slider
         local blueSlider = CreateFrame("Slider", "AttuneProgressBlueSlider_" .. uniqueId, sliderFrame, "OptionsSliderTemplate")
-        blueSlider:SetPoint("TOPLEFT", greenSlider, "BOTTOMLEFT", 0, -20)
+        blueSlider:SetPoint("TOPLEFT", greenSlider, "BOTTOMLEFT", 0, -30)
         blueSlider:SetSize(180, 15)
         blueSlider:SetMinMaxValues(0, 1)
         blueSlider:SetValue(colorTable[colorKey].b)
