@@ -1,12 +1,3 @@
---[[
-AttuneProgress - Enhanced Item Attunement Progress Display
-Features:
-- Visual progress bars for attunement progress (vertical bars)
-- Red bars for items not attunable by character (configurable)
-- Bounty icons for bountied items
-- Account-attunable indicators
---]]
-
 local WHITE_TEX = "Interface\\Buttons\\WHITE8X8"
 
 local CONST_ADDON_NAME = 'AttuneProgress'
