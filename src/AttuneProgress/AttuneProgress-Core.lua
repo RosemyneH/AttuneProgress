@@ -198,8 +198,8 @@ end
 local CONFIG = {
     PROGRESS_BAR = {
         WIDTH = 6,
-        MIN_HEIGHT_PERCENT = 0.2, -- 20% of item height at 0% progress
-        MAX_HEIGHT_PERCENT = 1.0, -- 100% of item height at 100% progress
+        MIN_HEIGHT_PERCENT = 0.2,
+        MAX_HEIGHT_PERCENT = 0.9,
         BACKGROUND_COLOR = {0, 0, 0, 1}, -- Black background
         PROGRESS_COLOR = {1, 1, 0, 1}, -- Yellow for progress (will be updated from settings)
         NON_ATTUNABLE_COLOR = {1, 0, 0, 1}, -- Red for non-attunable by character but attunable by account (will be updated from settings)
@@ -555,8 +555,7 @@ local function SetFrameAttunement(frame, itemLink)
             progFrame.child:SetWidth(CONFIG.PROGRESS_BAR.WIDTH)
             progFrame.child:SetFrameLevel(progFrame:GetFrameLevel()+1) -- Bar fill (effectively frame:GetFrameLevel() + 2)
 
-            -- Corrected SetPoint for 1px border effect (original was -1,-1)
-            progFrame.child:SetPoint('BOTTOMLEFT', progFrame, 'BOTTOMLEFT', 1, 1)
+            progFrame.child:SetPoint('BOTTOMLEFT', progFrame, 'BOTTOMLEFT', 0, 1)
 
             progFrame.child.texture = progFrame.child:CreateTexture(nil,'OVERLAY')
             progFrame.child.texture:SetAllPoints()
