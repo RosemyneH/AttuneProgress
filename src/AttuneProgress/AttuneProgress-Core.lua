@@ -1,14 +1,8 @@
---[[
-AttuneProgress - Enhanced Item Attunement Progress Display
-Features:
-- Visual progress bars for attunement progress (vertical bars)
-- Red bars for items not attunable by character (configurable)
-- Bounty icons for bountied items
-- Account-attunable indicators
---]]
+local WHITE_TEX = "Interface\\Buttons\\WHITE8X8"
 
 local CONST_ADDON_NAME = 'AttuneProgress'
 AttuneProgress = {}
+
 
 -- Settings with defaults
 local DefaultSettings = {
@@ -19,11 +13,45 @@ local DefaultSettings = {
     showAccountAttuneText = false,
     faeMode = false,
     scanEquipped = false,
+    excludeEquippedBars  = false,
+
+    progressBarColor = { r = 0, g = 1.0, b = 0.0, a = 1.0 },
     
     -- Color settings (RGB values 0-1)
-    progressBarColor = {r = 1.0, g = 1.0, b = 0.0}, -- Yellow
+    forgeColors = {
+        BASE        = { r = 0,   g = 1.0,   b = 0.0,   a = 1.0 }, -- green
+        TITANFORGED = { r = 0.468, g = 0.532, b = 1.000, a = 1.0 }, -- #B6C1FF
+        WARFORGED   = { r = 0.872, g = 0.206, b = 0.145, a = 1.0 }, -- #F07D6A
+        LIGHTFORGED = { r = 0.527, g = 0.527, b = 0.266, a = 1.0 }, -- #C0C08D
+      },
+
     nonAttunableBarColor = {r = 1.0, g = 0.0, b = 0.0}, -- Red
+    textColor = { r = 1.0, g = 1.0, b = 1.0, a = 1.0 },
 }
+local FORGE_LEVEL_MAP   = { BASE = 0, TITANFORGED = 1, WARFORGED = 2, LIGHTFORGED = 3 }
+local ForgeLevelNames   = { [0] = 'BASE', [1] = 'TITANFORGED', [2] = 'WARFORGED', [3] = 'LIGHTFORGED' }
+local function GetForgeLevelFromLink(itemLink)  -- ★ NEW
+    if not itemLink or not _G.GetItemLinkTitanforge then return FORGE_LEVEL_MAP.BASE end
+    local val = GetItemLinkTitanforge(itemLink)
+    for _, known in pairs(FORGE_LEVEL_MAP) do
+        if val == known then return val end
+    end
+    return FORGE_LEVEL_MAP.BASE
+end
+
+local function CopyTable(src)
+    if type(src) ~= 'table' then return src end
+    local dst = {}
+    for k, v in pairs(src) do
+        if type(v) == 'table' then
+            dst[k] = CopyTable(v) -- Recursive deep copy
+        else
+            dst[k] = v
+        end
+    end
+    return dst
+end
+
 local Settings = {}
 local CheckboxTooltips = {
     showRedForNonAttunable =
@@ -40,6 +68,9 @@ local CheckboxTooltips = {
         "Fae Mode: Always show progress bars, even when they are at 100%.",
     scanEquipped =
         "Scan your equipped gear and display attunement bars on the character frame slots.",
+    excludeEquippedBars =
+        "Suppress attunement progress **bars** on equipped-gear slots\n" ..
+        "(icons and text will still show on hover).",
 }
 
 local EquipmentSlotMapping = {
@@ -61,53 +92,95 @@ local EquipmentSlotMapping = {
     { id = INVSLOT_SECONDARYHAND,  frame = "CharacterSecondaryHandSlot" },
     { id = INVSLOT_RANGED,         frame = "CharacterRangedSlot"     },
 }
-
-local function LoadSettings()
-    -- Initialize the SavedVariable if it doesn't exist
-    if not AttuneProgressDB then
-        AttuneProgressDB = {}
-    end
+-- Function to save current settings
+local function SaveSettings()
+    if not AttuneProgressDB then AttuneProgressDB = {} end
     
-    -- Deep copy defaults first
-    for key, value in pairs(DefaultSettings) do
-        if type(value) == "table" then
-            Settings[key] = {}
-            for subkey, subvalue in pairs(value) do
-                Settings[key][subkey] = subvalue
-            end
-        else
-            Settings[key] = value
-        end
-    end
+    -- Clear existing to prevent stale data
+    wipe(AttuneProgressDB)
     
-    -- Override with saved settings
-    for key, value in pairs(AttuneProgressDB) do
-        if type(value) == "table" and type(Settings[key]) == "table" then
-            -- Merge table values (like colors)
-            for subkey, subvalue in pairs(value) do
-                Settings[key][subkey] = subvalue
-            end
-        else
-            Settings[key] = value
-        end
+    -- Deep copy current settings
+    for key, val in pairs(Settings) do
+        AttuneProgressDB[key] = CopyTable(val)
     end
 end
 
--- Function to save current settings
-local function SaveSettings()
-    if not AttuneProgressDB then
-        AttuneProgressDB = {}
-    end
-    
-    -- Deep copy current settings to SavedVariables
-    for key, value in pairs(Settings) do
-        if type(value) == "table" then
-            AttuneProgressDB[key] = {}
-            for subkey, subvalue in pairs(value) do
-                AttuneProgressDB[key][subkey] = subvalue
+local function CreateColorPicker(parent, label, tbl, key, anchor, yOffset)
+    -- the button/frame that holds the swatch
+    local sw = CreateFrame("Button", nil, parent)
+    sw:SetSize(20,20)
+    sw:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, yOffset)
+  
+    -- background border (optional)
+    sw.bg = sw:CreateTexture(nil,"BACKGROUND")
+    sw.bg:SetAllPoints(sw)
+    sw.bg:SetTexture(0,0,0,1)       -- solid black
+  
+    -- the actual color swatch
+    sw.tex = sw:CreateTexture(nil,"ARTWORK")
+    sw.tex:SetAllPoints(sw)
+    sw.tex:SetTexture(WHITE_TEX)    -- a 1×1 white pixel
+    sw.tex:SetVertexColor(
+      tbl[key].r,
+      tbl[key].g,
+      tbl[key].b,
+      tbl[key].a
+    )
+  
+    -- label
+    local txt = parent:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    txt:SetPoint("LEFT", sw, "RIGHT", 5, 0)
+    txt:SetText(label)
+  
+    sw:SetScript("OnClick", function()
+      local function updateSwatch()
+        local r,g,b = ColorPickerFrame:GetColorRGB()
+        local a     = OpacitySliderFrame:GetValue()
+        tbl[key].r, tbl[key].g, tbl[key].b, tbl[key].a = r,g,b,a
+        sw.tex:SetVertexColor(r,g,b,a)
+        SaveSettings()
+        AttuneProgress:ForceUpdateAllDisplays()
+      end
+  
+      ColorPickerFrame.hasOpacity  = true
+      ColorPickerFrame.opacity     = tbl[key].a
+      ColorPickerFrame.func        = updateSwatch
+      ColorPickerFrame.opacityFunc = updateSwatch
+      ColorPickerFrame:SetColorRGB(tbl[key].r, tbl[key].g, tbl[key].b)
+      OpacitySliderFrame:SetValue(tbl[key].a)
+      ColorPickerFrame:Show()
+    end)
+  
+    return sw
+  end
+
+-- lookup table for quick detection of CharacterFrame slots
+local EquipFrameLookup = {}
+for _, info in ipairs(EquipmentSlotMapping) do
+  EquipFrameLookup[info.frame] = true
+end
+
+local function LoadSettings()
+    if not AttuneProgressDB then AttuneProgressDB = {} end
+
+    -- Start with a deep copy of defaults
+    Settings = CopyTable(DefaultSettings)
+
+    -- Override with saved settings (deep merge)
+    for key, val in pairs(AttuneProgressDB) do
+        if type(val) == 'table' and type(Settings[key]) == 'table' then
+            -- Deep merge nested tables
+            for sub, subval in pairs(val) do
+                if type(subval) == 'table' and type(Settings[key][sub]) == 'table' then
+                    for subsub, subsubval in pairs(subval) do
+                        Settings[key][sub][subsub] = subsubval
+                    end
+                else
+                    Settings[key][sub] = subval
+                end
             end
         else
-            AttuneProgressDB[key] = value
+            Settings[key] = val
         end
     end
 end
@@ -116,8 +189,8 @@ end
 local CONFIG = {
     PROGRESS_BAR = {
         WIDTH = 6,
-        MIN_HEIGHT_PERCENT = 0.2, -- 20% of item height at 0% progress
-        MAX_HEIGHT_PERCENT = 1.0, -- 100% of item height at 100% progress
+        MIN_HEIGHT_PERCENT = 0.2,
+        MAX_HEIGHT_PERCENT = 0.9,
         BACKGROUND_COLOR = {0, 0, 0, 1}, -- Black background
         PROGRESS_COLOR = {1, 1, 0, 1}, -- Yellow for progress (will be updated from settings)
         NON_ATTUNABLE_COLOR = {1, 0, 0, 1}, -- Red for non-attunable by character but attunable by account (will be updated from settings)
@@ -352,124 +425,177 @@ end
 
 local function SetFrameAttunement(frame, itemLink)
     local itemId = GetItemIDFromLink(itemLink)
-    local progressFrameName = frame:GetName() .. '_attuneBar'
-    local progressFrame = _G[progressFrameName]
+    local frameName = frame:GetName() -- Get the name of the frame for unique child names
 
-    -- Ensure text font string exists
-    if not frame.attuneText then
-        frame.attuneText = frame:CreateFontString(nil, "OVERLAY", CONFIG.TEXT.FONT)
-        frame.attuneText:SetPoint("BOTTOM", frame, "BOTTOM", 0, 1)
+    -- Names for dynamically created frames
+    local progressName = frameName .. '_attuneBar'
+    local textHostFrameName = frameName .. '_attuneTextHost' -- Unique name for the text host
+
+    -- Attempt to get existing frames
+    local progFrame = _G[progressName]
+    -- We'll store textHostFrame on 'frame' to avoid potential global name collisions
+    -- and make it instance-specific if this function is called for multiple frames.
+
+    -- Initialize Text Host Frame and FontString ONCE per 'frame'
+    if not frame.textHostFrame then
+        -- Create a dedicated host frame for the text
+        frame.textHostFrame = CreateFrame('Frame', textHostFrameName, frame)
+        frame.textHostFrame:SetAllPoints(frame) -- Make it cover the parent item frame completely
+
+        -- Set FrameLevel:
+        -- progFrame is frame:GetFrameLevel() + 1
+        -- progFrame.child is progFrame:GetFrameLevel() + 1 = (frame:GetFrameLevel() + 1) + 1 = frame:GetFrameLevel() + 2
+        -- So, textHostFrame needs to be at least frame:GetFrameLevel() + 3 to be on top.
+        frame.textHostFrame:SetFrameLevel(frame:GetFrameLevel() + 3)
+
+        -- Create FontString as a child of the new textHostFrame
+        frame.attuneText = frame.textHostFrame:CreateFontString(nil, 'OVERLAY', CONFIG.TEXT.FONT)
+        -- Position the text. Original was ('BOTTOM', frame, 'BOTTOM', 0, 1).
+        -- Since textHostFrame overlays 'frame', this can be relative to textHostFrame.
+        -- Adjust the Y-offset (last parameter) as needed for desired vertical placement.
+        -- This will place text at the bottom of the item icon, but on top of the bar.
+        frame.attuneText:SetPoint('BOTTOM', frame.textHostFrame, 'BOTTOM', 0, 3) -- Using 3px offset as an example
     end
 
-    -- Reset text color and hide bar initially
+    -- Ensure attuneText is available (it should be if textHostFrame was created)
+    if not frame.attuneText then
+        -- This would indicate an issue, but as a fallback:
+        if frame.textHostFrame then
+             frame.attuneText = frame.textHostFrame:CreateFontString(nil, 'OVERLAY', CONFIG.TEXT.FONT)
+             frame.attuneText:SetPoint('BOTTOM', frame.textHostFrame, 'BOTTOM', 0, 3)
+        else
+            -- If textHostFrame doesn't exist, something is very wrong.
+            -- WoW API errors might appear in chat here.
+            return
+        end
+    end
+
+    -- Set text color (applies to frame.attuneText)
     frame.attuneText:SetTextColor(
-        CONFIG.TEXT.COLOR[1],
-        CONFIG.TEXT.COLOR[2],
-        CONFIG.TEXT.COLOR[3]
+        Settings.textColor.r,
+        Settings.textColor.g,
+        Settings.textColor.b,
+        Settings.textColor.a
     )
-    frame.attuneText:SetText("")
-    if progressFrame then progressFrame:Hide() end
+    frame.attuneText:SetText('') -- Clear text initially
 
-    if not itemLink or not itemId then return end
+    -- Hide progress bar initially
+    if progFrame then progFrame:Hide() end
 
-    local attunableByCharacter = IsItemValid(itemId)
-    local attunableByAccount = IsAttunableByAccount(itemId)
-    local attuneProgress = GetAttuneProgress(itemLink) or 0
-    local showBar = false
-    local barColor = CONFIG.PROGRESS_BAR.PROGRESS_COLOR
+    -- Early exit if no itemLink or itemId
+    if not itemLink or not itemId then
+        frame.attuneText:Hide() -- Ensure text is hidden if no item
+        return
+    end
 
-    -- Check for resist armor
-	-- local isResistArmor = IsItemResistArmor(itemLink, itemId)
+    local charOK   = IsItemValid(itemId)
+    local accOK    = IsAttunableByAccount(itemId)
+    local progress = GetAttuneProgress(itemLink) or 0
+    local showBar, barCol = false, {}
 
-    if attunableByCharacter then
-		-- In Fae Mode, show bars even at 100%. Otherwise, only show bars below 100%
-		if Settings.faeMode or attuneProgress < 100 then
-			showBar = true
-			barColor = CONFIG.PROGRESS_BAR.PROGRESS_COLOR -- Character color
-			if Settings.showProgressText then
-				if isResistArmor then
-					frame.attuneText:SetText("Resist " .. string.format("%.0f%%", attuneProgress))
-				else
-					frame.attuneText:SetText(string.format("%.0f%%", attuneProgress))
-				end
-			elseif isResistArmor then
-				frame.attuneText:SetText("Resist")
-			end
-		elseif isResistArmor then
-			frame.attuneText:SetText("Resist")
-		end
-	elseif Settings.showRedForNonAttunable and attunableByAccount then
-		-- ... existing code ...
-		if Settings.showProgressText and attuneProgress > 0 then
-			if isResistArmor then
-				frame.attuneText:SetText("Resist " .. string.format("%.0f%%", attuneProgress))
-			else
-				frame.attuneText:SetText(string.format("%.0f%%", attuneProgress))
-			end
-		elseif Settings.showAccountAttuneText then
-			if isResistArmor then
-				frame.attuneText:SetText("Resist Acc")
-			else
-				frame.attuneText:SetText("Acc")
-			end
-			-- ... existing color code ...
-		elseif isResistArmor then
-			frame.attuneText:SetText("Resist")
-		end
-	elseif isResistArmor then
-		frame.attuneText:SetText("Resist")
-	end
+    -- Determine if bar should be shown and its color, and set progress text
+    if charOK then
+        if Settings.faeMode or progress < 100 then
+            showBar = true
+            local fl = GetForgeLevelFromLink(itemLink)
+            local key = ForgeLevelNames[fl] or 'BASE'
+            barCol = Settings.forgeColors[key]
+            if Settings.showProgressText then
+                frame.attuneText:SetText(string.format('%.0f%%', progress))
+            end
+        end
+    elseif Settings.showRedForNonAttunable and accOK then -- Note: original code had elseif, implying charOK is false
+        if progress > 0  then
+            showBar = true
+            barCol  = Settings.nonAttunableBarColor
+            if Settings.showProgressText then
+                frame.attuneText:SetText(string.format('%.0f%%', progress))
+            end
+        end
+    end
 
+    -- Set "Acc" text if applicable (can override previous text)
+    if Settings.showAccountAttuneText and progress < 100 and not(charOK) and accOK then
+        frame.attuneText:SetText('Acc')
+    end
+
+    -- Suppress bar on equipped items if requested
+    local currentFrameName = frame:GetName() -- Use local var for clarity
+    if EquipFrameLookup[currentFrameName] and Settings.excludeEquippedBars then
+        showBar = false
+    end
+
+    -- Show or hide progress bar and text
     if showBar then
-        if not progressFrame then
-            progressFrame = CreateFrame('Frame', progressFrameName, frame)
-            progressFrame:SetWidth(CONFIG.PROGRESS_BAR.WIDTH + 2)
-            progressFrame:SetFrameLevel(frame:GetFrameLevel() + 1)
-            progressFrame.texture = progressFrame:CreateTexture(
-                nil,
-                'OVERLAY'
-            ) -- Set strata to OVERLAY for texture
-            progressFrame.texture:SetAllPoints()
-            progressFrame.texture:SetTexture(
+        if not progFrame then
+            progFrame = CreateFrame('Frame', progressName, frame)
+            progFrame:SetWidth(CONFIG.PROGRESS_BAR.WIDTH + 2)
+            progFrame:SetFrameLevel(frame:GetFrameLevel() + 1) -- Bar background/border
+            _G[progressName] = progFrame -- Store globally if other parts of the addon access it by name
+
+            progFrame.texture = progFrame:CreateTexture(nil,'OVERLAY')
+            progFrame.texture:SetAllPoints()
+            progFrame.texture:SetTexture(
                 CONFIG.PROGRESS_BAR.BACKGROUND_COLOR[1],
                 CONFIG.PROGRESS_BAR.BACKGROUND_COLOR[2],
                 CONFIG.PROGRESS_BAR.BACKGROUND_COLOR[3],
                 CONFIG.PROGRESS_BAR.BACKGROUND_COLOR[4]
             )
 
-            progressFrame.child = CreateFrame('Frame', progressFrameName .. 'Child', progressFrame)
-            progressFrame.child:SetWidth(CONFIG.PROGRESS_BAR.WIDTH)
-            progressFrame.child:SetFrameLevel(progressFrame:GetFrameLevel() + 1)
-            progressFrame.child:SetPoint('BOTTOMLEFT', progressFrame, 'BOTTOMLEFT', -1, -1)
-            progressFrame.child.texture = progressFrame.child:CreateTexture(
-                nil,
-                'OVERLAY'
-            ) -- Set strata to OVERLAY for texture
-            progressFrame.child.texture:SetAllPoints()
+            progFrame.child = CreateFrame('Frame', progressName..'Child', progFrame)
+            progFrame.child:SetWidth(CONFIG.PROGRESS_BAR.WIDTH)
+            progFrame.child:SetFrameLevel(progFrame:GetFrameLevel()+1) -- Bar fill (effectively frame:GetFrameLevel() + 2)
+
+            progFrame.child:SetPoint('BOTTOMLEFT', progFrame, 'BOTTOMLEFT', 0, 1)
+
+            progFrame.child.texture = progFrame.child:CreateTexture(nil,'OVERLAY')
+            progFrame.child.texture:SetAllPoints()
         end
 
-        progressFrame:SetParent(frame)
-        progressFrame:SetPoint('BOTTOMLEFT', frame, 'BOTTOMLEFT', 2, 2)
+        -- Set parent and position for progFrame (might be redundant if already parented, but safe)
+        progFrame:SetParent(frame)
+        progFrame:SetPoint('BOTTOMLEFT', frame, 'BOTTOMLEFT', 2, 2)
 
-        local frameHeight = frame:GetHeight()
-        local minHeight = frameHeight * CONFIG.PROGRESS_BAR.MIN_HEIGHT_PERCENT
-        local maxHeight = frameHeight * CONFIG.PROGRESS_BAR.MAX_HEIGHT_PERCENT
-        local height
-
-        -- Both character and account-wide items should respect progress ratio
-        local progressRatio = attuneProgress / 100
-        height = minHeight + (progressRatio * (maxHeight - minHeight))
-
-        height = math.max(height, minHeight) -- Ensure minimum height
-        progressFrame:SetHeight(height)
-
-        progressFrame.child:SetHeight(height - 2)
-        progressFrame.child.texture:SetTexture(
-            barColor[1], barColor[2], barColor[3], barColor[4]
+        -- Calculate height for the progress bar
+        local h = math.max(
+            frame:GetHeight() * CONFIG.PROGRESS_BAR.MIN_HEIGHT_PERCENT
+            + (progress / 100)
+            * (frame:GetHeight() * (CONFIG.PROGRESS_BAR.MAX_HEIGHT_PERCENT - CONFIG.PROGRESS_BAR.MIN_HEIGHT_PERCENT)),
+            frame:GetHeight() * CONFIG.PROGRESS_BAR.MIN_HEIGHT_PERCENT
         )
-        progressFrame:Show()
+        progFrame:SetHeight(h)
+        progFrame.child:SetHeight(h-2) -- Child height for 1px border top/bottom
+
+        -- Apply the chosen color to the bar fill
+        if barCol and barCol.r then -- Ensure barCol is valid
+            progFrame.child.texture:SetTexture(
+                barCol.r, barCol.g, barCol.b, barCol.a
+            )
+        else
+            -- Default color or error handling if barCol is not set as expected
+            progFrame.child.texture:SetTexture(0.5, 0.5, 0.5, 1) -- Grey fallback
+        end
+        progFrame:Show()
+
+        -- Show text if it has content
+        if frame.attuneText:GetText() and frame.attuneText:GetText() ~= "" then
+            frame.attuneText:Show()
+        else
+            frame.attuneText:Hide()
+        end
+
+    else -- showBar is false
+        if progFrame then progFrame:Hide() end
+
+        -- Show text if it has content (e.g., "Acc" text), even if bar is hidden
+        if frame.attuneText:GetText() and frame.attuneText:GetText() ~= "" then
+            frame.attuneText:Show()
+        else
+            frame.attuneText:Hide()
+        end
     end
 end
+
 
 local function UpdateItemDisplay(frame, itemLink)
     -- If the addon is not logically "enabled" (though the option is removed, we keep the flag)
@@ -736,7 +862,16 @@ local function CreateOptionsPanel()
     "scanEquipped",
     lastElement,
     -10
-)
+    )
+
+    lastElement = CreateCheckbox(
+      panel,
+      "Exclude bars from equipped gear",
+      "excludeEquippedBars",
+      lastElement,
+      -10
+    )
+
 
     -- Description
     --[[--
@@ -767,133 +902,54 @@ local function CreateOptionsPanel()
 end
 
 local function CreateColorOptionsPanel()
-    -- Color Panel
-    local colorPanel = CreateFrame("Frame")
-    colorPanel.name = "Colors"
-    colorPanel.parent = CONST_ADDON_NAME
-
-    -- Title
-    local colorTitle = colorPanel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    colorTitle:SetPoint("TOPLEFT", 16, -16)
-    colorTitle:SetText(CONST_ADDON_NAME .. " - Color Settings")
-
-    -- Color slider helper function
-    local function CreateColorSlider(parent, text, colorTable, colorKey, anchorFrame, offsetY)
-        local label = parent:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-        label:SetPoint("TOPLEFT", anchorFrame, "BOTTOMLEFT", 0, offsetY)
-        label:SetText(text)
-
-        local sliderFrame = CreateFrame("Frame", nil, parent)
-        sliderFrame:SetPoint("TOPLEFT", label, "BOTTOMLEFT", 0, -5)
-        sliderFrame:SetSize(200, 60)
-
-        -- Generate unique names for the sliders
-        local uniqueId = colorKey .. "_" .. math.random(1000, 9999)
-
-        -- Red slider
-        local redSlider = CreateFrame("Slider", "AttuneProgressRedSlider_" .. uniqueId, sliderFrame, "OptionsSliderTemplate")
-        redSlider:SetPoint("TOPLEFT", sliderFrame, "TOPLEFT", 0, -10)
-        redSlider:SetSize(180, 15)
-        redSlider:SetMinMaxValues(0, 1)
-        redSlider:SetValue(colorTable[colorKey].r)
-        redSlider:SetValueStep(0.01)
-        _G[redSlider:GetName().."Low"]:SetText("0")
-        _G[redSlider:GetName().."High"]:SetText("1")
-        _G[redSlider:GetName().."Text"]:SetText("Red: " .. string.format("%.2f", colorTable[colorKey].r))
-
-        -- Green slider
-        local greenSlider = CreateFrame("Slider", "AttuneProgressGreenSlider_" .. uniqueId, sliderFrame, "OptionsSliderTemplate")
-        greenSlider:SetPoint("TOPLEFT", redSlider, "BOTTOMLEFT", 0, -20)
-        greenSlider:SetSize(180, 15)
-        greenSlider:SetMinMaxValues(0, 1)
-        greenSlider:SetValue(colorTable[colorKey].g)
-        greenSlider:SetValueStep(0.01)
-        _G[greenSlider:GetName().."Low"]:SetText("0")
-        _G[greenSlider:GetName().."High"]:SetText("1")
-        _G[greenSlider:GetName().."Text"]:SetText("Green: " .. string.format("%.2f", colorTable[colorKey].g))
-
-        -- Blue slider
-        local blueSlider = CreateFrame("Slider", "AttuneProgressBlueSlider_" .. uniqueId, sliderFrame, "OptionsSliderTemplate")
-        blueSlider:SetPoint("TOPLEFT", greenSlider, "BOTTOMLEFT", 0, -30)
-        blueSlider:SetSize(180, 15)
-        blueSlider:SetMinMaxValues(0, 1)
-        blueSlider:SetValue(colorTable[colorKey].b)
-        blueSlider:SetValueStep(0.01)
-        _G[blueSlider:GetName().."Low"]:SetText("0")
-        _G[blueSlider:GetName().."High"]:SetText("1")
-        _G[blueSlider:GetName().."Text"]:SetText("Blue: " .. string.format("%.2f", colorTable[colorKey].b))
-
-        -- Color preview
-        local colorPreview = CreateFrame("Frame", nil, sliderFrame)
-        colorPreview:SetPoint("TOPRIGHT", sliderFrame, "TOPRIGHT", 0, 0)
-        colorPreview:SetSize(15, 45)
-        colorPreview.texture = colorPreview:CreateTexture(nil, "BACKGROUND")
-        colorPreview.texture:SetAllPoints()
-        colorPreview.texture:SetTexture(colorTable[colorKey].r, colorTable[colorKey].g, colorTable[colorKey].b, 1)
-
-        local function UpdateColor()
-            colorTable[colorKey].r = redSlider:GetValue()
-            colorTable[colorKey].g = greenSlider:GetValue()
-            colorTable[colorKey].b = blueSlider:GetValue()
-            colorPreview.texture:SetTexture(colorTable[colorKey].r, colorTable[colorKey].g, colorTable[colorKey].b, 1)
-            _G[redSlider:GetName().."Text"]:SetText("Red: " .. string.format("%.2f", colorTable[colorKey].r))
-            _G[greenSlider:GetName().."Text"]:SetText("Green: " .. string.format("%.2f", colorTable[colorKey].g))
-            _G[blueSlider:GetName().."Text"]:SetText("Blue: " .. string.format("%.2f", colorTable[colorKey].b))
-            UpdateConfigColors()
-            SaveSettings() -- Save when changed
-            AttuneProgress:ForceUpdateAllDisplays()
-        end
-
-        redSlider:SetScript("OnValueChanged", UpdateColor)
-        greenSlider:SetScript("OnValueChanged", UpdateColor)
-        blueSlider:SetScript("OnValueChanged", UpdateColor)
-
-        return sliderFrame
+    local cp = CreateFrame("Frame")
+    cp.name   = 'Colors'
+    cp.parent = CONST_ADDON_NAME
+  
+    local header = cp:CreateFontString(nil, 'ARTWORK', 'GameFontNormalLarge')
+    header:SetPoint('TOPLEFT', 16, -16)
+    header:SetText(CONST_ADDON_NAME .. ' - Color Settings')
+  
+    local lastSwatch = header
+    local SPACING    = -28
+  
+    -- first: account‐attunable bar colour
+    lastSwatch = CreateColorPicker(
+      cp,
+      'Account-attunable bar colour',
+      Settings,
+      'nonAttunableBarColor',
+      lastSwatch,
+      SPACING
+    )
+  
+    -- then each forge‐tier
+    for lvl = 0, 3 do
+      local key   = ForgeLevelNames[lvl]
+      local label = key:lower():gsub("^%l", string.upper) .. ' bar colour'
+      lastSwatch = CreateColorPicker(
+        cp,
+        label,
+        Settings.forgeColors,
+        key,
+        lastSwatch,
+        SPACING
+      )
     end
-
-    local lastElement = colorTitle
-
-    -- Character Progress Bar Color
-    lastElement = CreateColorSlider(
-        colorPanel,
-        "Character-attunable progress bar color:",
-        Settings,
-        "progressBarColor",
-        lastElement,
-        -25
+  
+    -- finally global text colour
+    lastSwatch = CreateColorPicker(
+      cp,
+      'Global text colour',
+      Settings,
+      'textColor',
+      lastSwatch,
+      SPACING
     )
-
-    -- Account Progress Bar Color
-    lastElement = CreateColorSlider(
-        colorPanel,
-        "Account-attunable progress bar color:",
-        Settings,
-        "nonAttunableBarColor",
-        lastElement,
-        -85
-    )
-
-    -- Color Description
-    local colorDescription = colorPanel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    colorDescription:SetPoint("TOPLEFT", lastElement, "BOTTOMLEFT", 0, -90)
-    colorDescription:SetWidth(500)
-    colorDescription:SetJustifyH("LEFT")
-    colorDescription:SetText(
-        "Customize the colors of the attunement progress bars.\n\n" ..
-            "Character-attunable: For items your current character can attune.\n" ..
-            "Account-attunable: For items attunable by other characters on your account.\n\n" ..
-            "Use the RGB sliders to adjust each color component (0.0 to 1.0).\n" ..
-            "The colored square shows a preview of your selected color.\n" ..
-            "Changes are applied immediately to all visible items."
-    )
-
-    -- Add to Blizzard Interface Options as subcategory
-    if InterfaceOptions_AddCategory then
-        InterfaceOptions_AddCategory(colorPanel)
-    end
-
-    return colorPanel
-end
+  
+    InterfaceOptions_AddCategory(cp)
+    return cp
+  end
 
 -- WotLK compatible timer function
 local function DelayedCall(delay, func)
@@ -924,24 +980,21 @@ local function PeriodicFrameHooking()
     hookFrame:Show()
 end
 
--- Event Management
 -- Event Management (updated)
 local function OnEvent(self, event, ...)
     if event == "ADDON_LOADED" and ... == CONST_ADDON_NAME then
         self:UnregisterEvent("ADDON_LOADED")
         
-        -- Load settings from SavedVariables
         LoadSettings()
         
-        -- Delay initialization slightly to ensure all frames are loaded
         DelayedCall(0.1, function()
             AttuneProgress:Initialize()
         end)
     elseif event == "BAG_UPDATE" or event == "PLAYER_ENTERING_WORLD" then
         -- Force refresh on bag updates and world entering
-        DelayedCall(0.1, function()
+        --DelayedCall(0.1, function()
             AttuneProgress:ForceUpdateAllDisplays()
-        end)
+        --end)
     elseif event == "UNIT_INVENTORY_CHANGED" then
         local unit = ...
         if unit == "player" then
@@ -959,14 +1012,11 @@ eventFrame:RegisterEvent("UNIT_INVENTORY_CHANGED")
 function AttuneProgress:Initialize()
     print("|cff00ff00AttuneProgress|r: Initializing...")
 
-    -- Update CONFIG colors from settings on initialization
-    UpdateConfigColors()
-    -- Create both options panels
+    LoadSettings()
+    UpdateConfigColors() -- lol
     CreateOptionsPanel()
-    CreateColorOptionsPanel()
-    -- Enable updates always
+    CreateColorOptionsPanel()    
     AttuneProgress:EnableUpdates()
-    -- Start periodic frame hooking
     PeriodicFrameHooking()
 
     --print("|cff00ff00AttuneProgress|r: Enhanced attunement display loaded and enabled!")
