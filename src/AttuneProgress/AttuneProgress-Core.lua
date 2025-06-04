@@ -5,9 +5,7 @@ Features:
 - Red bars for items not attunable by character (configurable)
 - Bounty icons for bountied items
 - Account-attunable indicators
-- Enabled by default (always on)
-- WotLK 3.3.5a compatible
-]]
+--]]
 
 local CONST_ADDON_NAME = 'AttuneProgress'
 AttuneProgress = {}
@@ -20,12 +18,49 @@ local DefaultSettings = {
     showProgressText = true,
     showAccountAttuneText = false,
     faeMode = false,
+    scanEquipped = false,
     
     -- Color settings (RGB values 0-1)
     progressBarColor = {r = 1.0, g = 1.0, b = 0.0}, -- Yellow
     nonAttunableBarColor = {r = 1.0, g = 0.0, b = 0.0}, -- Red
 }
 local Settings = {}
+local CheckboxTooltips = {
+    showRedForNonAttunable =
+        "Display red bars for items attunable by your account but not by this character.\nHeight indicates attunement progress.",
+    showBountyIcons =
+        "Show a gold icon on items that currently have a bounty.",
+    showAccountIcons =
+        "Show a blue square for items attunable by your account but not by this character.",
+    showProgressText =
+        "Display the numeric percentage on each progress bar.",
+    showAccountAttuneText =
+        "Display 'Acc' text on items attunable by account only.",
+    faeMode =
+        "Fae Mode: Always show progress bars, even when they are at 100%.",
+    scanEquipped =
+        "Scan your equipped gear and display attunement bars on the character frame slots.",
+}
+
+local EquipmentSlotMapping = {
+    { id = INVSLOT_HEAD,           frame = "CharacterHeadSlot"       },
+    { id = INVSLOT_NECK,           frame = "CharacterNeckSlot"       },
+    { id = INVSLOT_SHOULDER,       frame = "CharacterShoulderSlot"   },
+    { id = INVSLOT_BACK,           frame = "CharacterBackSlot"       },
+    { id = INVSLOT_CHEST,          frame = "CharacterChestSlot"      },
+    { id = INVSLOT_WRIST,          frame = "CharacterWristSlot"      },
+    { id = INVSLOT_HAND,           frame = "CharacterHandsSlot"      },
+    { id = INVSLOT_WAIST,          frame = "CharacterWaistSlot"      },
+    { id = INVSLOT_LEGS,           frame = "CharacterLegsSlot"       },
+    { id = INVSLOT_FEET,           frame = "CharacterFeetSlot"       },
+    { id = INVSLOT_FINGER1,        frame = "CharacterFinger0Slot"    },
+    { id = INVSLOT_FINGER2,        frame = "CharacterFinger1Slot"    },
+    { id = INVSLOT_TRINKET1,       frame = "CharacterTrinket0Slot"   },
+    { id = INVSLOT_TRINKET2,       frame = "CharacterTrinket1Slot"   },
+    { id = INVSLOT_MAINHAND,       frame = "CharacterMainHandSlot"   },
+    { id = INVSLOT_SECONDARYHAND,  frame = "CharacterSecondaryHandSlot" },
+    { id = INVSLOT_RANGED,         frame = "CharacterRangedSlot"     },
+}
 
 local function LoadSettings()
     -- Initialize the SavedVariable if it doesn't exist
@@ -138,7 +173,7 @@ end
 
 -- AdiBags Stack Buttons
 local AdiBagsSlots = {}
-for i = 1, 160 do
+for i = 1, 280 do
     table.insert(AdiBagsSlots, "AdiBagsItemButton" .. i)
 end
 
@@ -599,9 +634,10 @@ local function CreateOptionsPanel()
     -- Checkbutton helper function
     local function CreateCheckbox(parent, text, settingKey, anchorFrame, offsetY)
         local checkboxName = "AttuneProgressCheckbox_" .. settingKey
-        local cb = CreateFrame("CheckButton", checkboxName, parent, "InterfaceOptionsCheckButtonTemplate")
+        local cb = CreateFrame("CheckButton", checkboxName, parent,
+                               "InterfaceOptionsCheckButtonTemplate")
         cb:SetPoint("TOPLEFT", anchorFrame, "BOTTOMLEFT", 0, offsetY)
-        
+    
         local textObject = _G[cb:GetName() .. "Text"]
         if textObject then
             textObject:SetText(text)
@@ -618,9 +654,24 @@ local function CreateOptionsPanel()
         cb:SetChecked(Settings[settingKey])
         cb:SetScript("OnClick", function(self)
             Settings[settingKey] = self:GetChecked()
-            SaveSettings() -- Save when changed
+            SaveSettings()
             AttuneProgress:ForceUpdateAllDisplays()
         end)
+    
+        -- NEW: tooltip on hover
+        local tip = CheckboxTooltips[settingKey]
+        if tip then
+            cb:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetText(text, 1, 1, 1)
+                GameTooltip:AddLine(tip, nil, nil, nil, true)
+                GameTooltip:Show()
+            end)
+            cb:SetScript("OnLeave", function(self)
+                GameTooltip:Hide()
+            end)
+        end
+    
         return cb
     end
 
@@ -679,8 +730,16 @@ local function CreateOptionsPanel()
         lastElement,
         -10
     )
+    lastElement = CreateCheckbox(
+    panel,
+    "Scan equipped gear",
+    "scanEquipped",
+    lastElement,
+    -10
+)
 
     -- Description
+    --[[--
     local description = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     description:SetPoint("TOPLEFT", lastElement, "BOTTOMLEFT", 0, -30)
     description:SetWidth(500)
@@ -697,6 +756,7 @@ local function CreateOptionsPanel()
             "Supported: Blizzard bags, ElvUI bags, AdiBags, Bagnon Guild Bank\n\n" ..
             "Check the 'Colors' subcategory to customize bar colors."
     )
+    --]]--
 
     -- Add to Blizzard Interface Options
     if InterfaceOptions_AddCategory then
@@ -882,6 +942,11 @@ local function OnEvent(self, event, ...)
         DelayedCall(0.1, function()
             AttuneProgress:ForceUpdateAllDisplays()
         end)
+    elseif event == "UNIT_INVENTORY_CHANGED" then
+        local unit = ...
+        if unit == "player" then
+            AttuneProgress:ForceUpdateAllDisplays()
+        end
     end
 end
 local eventFrame = CreateFrame("Frame", "AttuneProgressEventFrame", UIParent)
@@ -889,7 +954,7 @@ eventFrame:SetScript("OnEvent", OnEvent)
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("BAG_UPDATE")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-
+eventFrame:RegisterEvent("UNIT_INVENTORY_CHANGED")
 -- Main Functions
 function AttuneProgress:Initialize()
     print("|cff00ff00AttuneProgress|r: Initializing...")
@@ -1087,6 +1152,15 @@ function AttuneProgress:ForceUpdateAllDisplays()
                 -- We'll let the OnUpdate handler determine the item link
                 -- since it has the logic for multiple methods
                 BagnonGuildBank_OnUpdate(frame, 0.1) -- Force an immediate update
+            end
+        end
+    end
+    if Settings.scanEquipped then
+        for _, info in ipairs(EquipmentSlotMapping) do
+            local slotFrame = _G[info.frame]
+            if slotFrame then
+                local link = GetInventoryItemLink("player", info.id)
+                UpdateItemDisplay(slotFrame, link)
             end
         end
     end
