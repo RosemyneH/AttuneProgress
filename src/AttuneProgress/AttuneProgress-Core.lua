@@ -684,6 +684,22 @@ local function AdiBags_OnUpdate(self, elapsed)
     UpdateItemDisplay(self, itemLink)
 end
 
+        "showAccountIcons",
+        "showProgressText",
+        "showAccountAttuneText",
+        "faeMode",
+        "scanEquipped",
+        "excludeEquippedBars"
+    }
+    
+    for _, settingKey in ipairs(checkboxMappings) do
+        local checkbox = _G["AttuneProgressCheckbox_" .. settingKey]
+        if checkbox then
+            checkbox:SetChecked(Settings[settingKey])
+        end
+    end
+end
+
 local function BagnonGuildBank_OnUpdate(self, elapsed)
     -- Only update if BagnonFrameguildbank is visible
     if not _G.BagnonFrameguildbank or not _G.BagnonFrameguildbank:IsVisible() then
@@ -779,7 +795,7 @@ local function CreateOptionsPanel()
     
         cb:SetChecked(Settings[settingKey])
         cb:SetScript("OnClick", function(self)
-            Settings[settingKey] = self:GetChecked()
+            Settings[settingKey] = not not self:GetChecked()
             SaveSettings()
             AttuneProgress:ForceUpdateAllDisplays()
         end)
@@ -980,16 +996,25 @@ local function PeriodicFrameHooking()
     hookFrame:Show()
 end
 
--- Event Management (updated)
+-- Event Management
 local function OnEvent(self, event, ...)
     if event == "ADDON_LOADED" and ... == CONST_ADDON_NAME then
         self:UnregisterEvent("ADDON_LOADED")
         
-        LoadSettings()
+        -- LoadSettings()
         
         DelayedCall(0.1, function()
             AttuneProgress:Initialize()
         end)
+    elseif event == "VARIABLES_LOADED" then
+        -- NOW SavedVariables are loaded
+        self:UnregisterEvent("VARIABLES_LOADED")
+        LoadSettings()
+        
+        -- Refresh any UI that might have been created already
+        if _G["AttuneProgressCheckbox_showRedForNonAttunable"] then
+            AttuneProgress:RefreshOptionsPanel()
+        end
     elseif event == "BAG_UPDATE" or event == "PLAYER_ENTERING_WORLD" then
         -- Force refresh on bag updates and world entering
         --DelayedCall(0.1, function()
@@ -1008,11 +1033,13 @@ eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("BAG_UPDATE")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("UNIT_INVENTORY_CHANGED")
+eventFrame:RegisterEvent("VARIABLES_LOADED")
+
 -- Main Functions
 function AttuneProgress:Initialize()
     print("|cff00ff00AttuneProgress|r: Initializing...")
 
-    LoadSettings()
+   --  LoadSettings()
     UpdateConfigColors() -- lol
     CreateOptionsPanel()
     CreateColorOptionsPanel()    
