@@ -684,6 +684,11 @@ local function AdiBags_OnUpdate(self, elapsed)
     UpdateItemDisplay(self, itemLink)
 end
 
+function AttuneProgress:RefreshOptionsPanel()
+    -- Update checkbox states after settings are loaded
+    local checkboxMappings = {
+        "showRedForNonAttunable",
+        "showBountyIcons", 
         "showAccountIcons",
         "showProgressText",
         "showAccountAttuneText",
