@@ -3,8 +3,15 @@ local WHITE_TEX = "Interface\\Buttons\\WHITE8X8"
 local CONST_ADDON_NAME = 'AttuneProgress'
 AttuneProgress = {}
 
+-- Animation and update timing
+local LERP_SPEED = 0.1
+local COMBAT_UPDATE_INTERVAL = 0.25 -- 4 calcs/sec
+local combatUpdateTimer = 0
+local combatUpdateFrame = nil
 
--- Settings with defaults
+-- Store animation data for each frame
+local frameAnimationData = {}
+
 local DefaultSettings = {
     showRedForNonAttunable = true,
     showBountyIcons = true,
@@ -89,9 +96,24 @@ local EquipmentSlotMapping = {
     { id = INVSLOT_TRINKET1,       frame = "CharacterTrinket0Slot"   },
     { id = INVSLOT_TRINKET2,       frame = "CharacterTrinket1Slot"   },
     { id = INVSLOT_MAINHAND,       frame = "CharacterMainHandSlot"   },
-    { id = INVSLOT_SECONDARYHAND,  frame = "CharacterSecondaryHandSlot" },
+    { id = INVSLOT_OFFHAND,  frame = "CharacterSecondaryHandSlot" },
     { id = INVSLOT_RANGED,         frame = "CharacterRangedSlot"     },
 }
+
+local function CreateCombatUpdateFrame()
+    if combatUpdateFrame then return end
+    
+    combatUpdateFrame = CreateFrame("Frame")
+    combatUpdateFrame:SetScript("OnUpdate", function(self, elapsed)
+        combatUpdateTimer = combatUpdateTimer + elapsed
+        if combatUpdateTimer >= COMBAT_UPDATE_INTERVAL then
+            combatUpdateTimer = 0
+            AttuneProgress:ForceUpdateAllDisplays()
+        end
+    end)
+    combatUpdateFrame:Show()
+end
+
 -- Function to save current settings
 local function SaveSettings()
     if not AttuneProgressDB then AttuneProgressDB = {} end
@@ -425,66 +447,49 @@ end
 
 local function SetFrameAttunement(frame, itemLink)
     local itemId = GetItemIDFromLink(itemLink)
-    local frameName = frame:GetName() -- Get the name of the frame for unique child names
+    local frameName = frame:GetName()
 
     -- Names for dynamically created frames
     local progressName = frameName .. '_attuneBar'
-    local textHostFrameName = frameName .. '_attuneTextHost' -- Unique name for the text host
+    local textHostFrameName = frameName .. '_attuneTextHost'
 
-    -- Attempt to get existing frames
+    -- Get existing frames
     local progFrame = _G[progressName]
-    -- We'll store textHostFrame on 'frame' to avoid potential global name collisions
-    -- and make it instance-specific if this function is called for multiple frames.
 
     -- Initialize Text Host Frame and FontString ONCE per 'frame'
     if not frame.textHostFrame then
-        -- Create a dedicated host frame for the text
         frame.textHostFrame = CreateFrame('Frame', textHostFrameName, frame)
-        frame.textHostFrame:SetAllPoints(frame) -- Make it cover the parent item frame completely
-
-        -- Set FrameLevel:
-        -- progFrame is frame:GetFrameLevel() + 1
-        -- progFrame.child is progFrame:GetFrameLevel() + 1 = (frame:GetFrameLevel() + 1) + 1 = frame:GetFrameLevel() + 2
-        -- So, textHostFrame needs to be at least frame:GetFrameLevel() + 3 to be on top.
+        frame.textHostFrame:SetAllPoints(frame)
         frame.textHostFrame:SetFrameLevel(frame:GetFrameLevel() + 3)
 
-        -- Create FontString as a child of the new textHostFrame
         frame.attuneText = frame.textHostFrame:CreateFontString(nil, 'OVERLAY', CONFIG.TEXT.FONT)
-        -- Position the text. Original was ('BOTTOM', frame, 'BOTTOM', 0, 1).
-        -- Since textHostFrame overlays 'frame', this can be relative to textHostFrame.
-        -- Adjust the Y-offset (last parameter) as needed for desired vertical placement.
-        -- This will place text at the bottom of the item icon, but on top of the bar.
-        frame.attuneText:SetPoint('BOTTOM', frame.textHostFrame, 'BOTTOM', 0, 3) -- Using 3px offset as an example
+        frame.attuneText:SetPoint('BOTTOM', frame.textHostFrame, 'BOTTOM', 0, 3)
     end
 
-    -- Ensure attuneText is available (it should be if textHostFrame was created)
     if not frame.attuneText then
-        -- This would indicate an issue, but as a fallback:
         if frame.textHostFrame then
              frame.attuneText = frame.textHostFrame:CreateFontString(nil, 'OVERLAY', CONFIG.TEXT.FONT)
              frame.attuneText:SetPoint('BOTTOM', frame.textHostFrame, 'BOTTOM', 0, 3)
         else
-            -- If textHostFrame doesn't exist, something is very wrong.
-            -- WoW API errors might appear in chat here.
             return
         end
     end
 
-    -- Set text color (applies to frame.attuneText)
+    -- Set text color
     frame.attuneText:SetTextColor(
         Settings.textColor.r,
         Settings.textColor.g,
         Settings.textColor.b,
         Settings.textColor.a
     )
-    frame.attuneText:SetText('') -- Clear text initially
+    frame.attuneText:SetText('')
 
     -- Hide progress bar initially
     if progFrame then progFrame:Hide() end
 
     -- Early exit if no itemLink or itemId
     if not itemLink or not itemId then
-        frame.attuneText:Hide() -- Ensure text is hidden if no item
+        frame.attuneText:Hide()
         return
     end
 
@@ -504,7 +509,7 @@ local function SetFrameAttunement(frame, itemLink)
                 frame.attuneText:SetText(string.format('%.0f%%', progress))
             end
         end
-    elseif Settings.showRedForNonAttunable and accOK then -- Note: original code had elseif, implying charOK is false
+    elseif Settings.showRedForNonAttunable and accOK then
         if progress > 0  then
             showBar = true
             barCol  = Settings.nonAttunableBarColor
@@ -514,13 +519,13 @@ local function SetFrameAttunement(frame, itemLink)
         end
     end
 
-    -- Set "Acc" text if applicable (can override previous text)
+    -- Set "Acc" text if applicable
     if Settings.showAccountAttuneText and progress < 100 and not(charOK) and accOK then
         frame.attuneText:SetText('Acc')
     end
 
     -- Suppress bar on equipped items if requested
-    local currentFrameName = frame:GetName() -- Use local var for clarity
+    local currentFrameName = frame:GetName()
     if EquipFrameLookup[currentFrameName] and Settings.excludeEquippedBars then
         showBar = false
     end
@@ -530,8 +535,8 @@ local function SetFrameAttunement(frame, itemLink)
         if not progFrame then
             progFrame = CreateFrame('Frame', progressName, frame)
             progFrame:SetWidth(CONFIG.PROGRESS_BAR.WIDTH + 2)
-            progFrame:SetFrameLevel(frame:GetFrameLevel() + 1) -- Bar background/border
-            _G[progressName] = progFrame -- Store globally if other parts of the addon access it by name
+            progFrame:SetFrameLevel(frame:GetFrameLevel() + 1)
+            _G[progressName] = progFrame
 
             progFrame.texture = progFrame:CreateTexture(nil,'OVERLAY')
             progFrame.texture:SetAllPoints()
@@ -544,36 +549,91 @@ local function SetFrameAttunement(frame, itemLink)
 
             progFrame.child = CreateFrame('Frame', progressName..'Child', progFrame)
             progFrame.child:SetWidth(CONFIG.PROGRESS_BAR.WIDTH)
-            progFrame.child:SetFrameLevel(progFrame:GetFrameLevel()+1) -- Bar fill (effectively frame:GetFrameLevel() + 2)
-
+            progFrame.child:SetFrameLevel(progFrame:GetFrameLevel()+1)
             progFrame.child:SetPoint('BOTTOMLEFT', progFrame, 'BOTTOMLEFT', 0, 1)
 
             progFrame.child.texture = progFrame.child:CreateTexture(nil,'OVERLAY')
             progFrame.child.texture:SetAllPoints()
+
+            -- Initialize animation data
+            frameAnimationData[frameName] = {
+                currentHeight = 0,
+                targetHeight = 0,
+                isAnimating = false
+            }
         end
 
-        -- Set parent and position for progFrame (might be redundant if already parented, but safe)
         progFrame:SetParent(frame)
         progFrame:SetPoint('BOTTOMLEFT', frame, 'BOTTOMLEFT', 2, 2)
 
-        -- Calculate height for the progress bar
-        local h = math.max(
+        -- Calculate target height for the progress bar
+        local targetHeight = math.max(
             frame:GetHeight() * CONFIG.PROGRESS_BAR.MIN_HEIGHT_PERCENT
             + (progress / 100)
             * (frame:GetHeight() * (CONFIG.PROGRESS_BAR.MAX_HEIGHT_PERCENT - CONFIG.PROGRESS_BAR.MIN_HEIGHT_PERCENT)),
             frame:GetHeight() * CONFIG.PROGRESS_BAR.MIN_HEIGHT_PERCENT
         )
-        progFrame:SetHeight(h)
-        progFrame.child:SetHeight(h-2) -- Child height for 1px border top/bottom
+
+        -- Initialize animation data if not exists
+        if not frameAnimationData[frameName] then
+            frameAnimationData[frameName] = {
+                currentHeight = targetHeight,
+                targetHeight = targetHeight,
+                isAnimating = false
+            }
+        end
+
+        local animData = frameAnimationData[frameName]
+
+        -- Check if we need to animate
+        if math.abs(animData.targetHeight - targetHeight) > 1 then
+            animData.targetHeight = targetHeight
+            animData.isAnimating = true
+
+            -- Create animation OnUpdate if not already animating
+            if not progFrame.animationScript then
+                progFrame.animationScript = true
+                progFrame:SetScript("OnUpdate", function(self, elapsed)
+                    local data = frameAnimationData[frameName]
+                    if not data or not data.isAnimating then
+                        self:SetScript("OnUpdate", nil)
+                        self.animationScript = nil
+                        return
+                    end
+
+                    -- Lerp towards target height
+                    local diff = data.targetHeight - data.currentHeight
+                    if math.abs(diff) < 0.5 then
+                        -- Close enough, snap to target
+                        data.currentHeight = data.targetHeight
+                        data.isAnimating = false
+                        self:SetScript("OnUpdate", nil)
+                        self.animationScript = nil
+                    else
+                        -- Animate towards target
+                        data.currentHeight = data.currentHeight + (diff * LERP_SPEED * elapsed)
+                    end
+
+                    -- Apply the height
+                    self:SetHeight(data.currentHeight)
+                    self.child:SetHeight(data.currentHeight - 2)
+                end)
+            end
+        else
+            -- No animation needed, set height directly
+            animData.currentHeight = targetHeight
+            animData.targetHeight = targetHeight
+            progFrame:SetHeight(targetHeight)
+            progFrame.child:SetHeight(targetHeight - 2)
+        end
 
         -- Apply the chosen color to the bar fill
-        if barCol and barCol.r then -- Ensure barCol is valid
+        if barCol and barCol.r then
             progFrame.child.texture:SetTexture(
                 barCol.r, barCol.g, barCol.b, barCol.a
             )
         else
-            -- Default color or error handling if barCol is not set as expected
-            progFrame.child.texture:SetTexture(0.5, 0.5, 0.5, 1) -- Grey fallback
+            progFrame.child.texture:SetTexture(0.5, 0.5, 0.5, 1)
         end
         progFrame:Show()
 
@@ -587,7 +647,7 @@ local function SetFrameAttunement(frame, itemLink)
     else -- showBar is false
         if progFrame then progFrame:Hide() end
 
-        -- Show text if it has content (e.g., "Acc" text), even if bar is hidden
+        -- Show text if it has content
         if frame.attuneText:GetText() and frame.attuneText:GetText() ~= "" then
             frame.attuneText:Show()
         else
@@ -1044,20 +1104,18 @@ eventFrame:RegisterEvent("VARIABLES_LOADED")
 function AttuneProgress:Initialize()
     print("|cff00ff00AttuneProgress|r: Initializing...")
 
-   --  LoadSettings()
-    UpdateConfigColors() -- lol
+    UpdateConfigColors()
     CreateOptionsPanel()
     CreateColorOptionsPanel()    
     AttuneProgress:EnableUpdates()
+    CreateCombatUpdateFrame()
     PeriodicFrameHooking()
 
-    --print("|cff00ff00AttuneProgress|r: Enhanced attunement display loaded and enabled!")
     print(
         "|cff00ff00AttuneProgress|r: Use /ap for commands or check Interface > AddOns > " ..
             CONST_ADDON_NAME .. " for options."
     )
     
-    -- Multiple delayed refreshes to catch frames that load later
     DelayedCall(1.0, function() AttuneProgress:ForceUpdateAllDisplays() end)
     DelayedCall(3.0, function() AttuneProgress:ForceUpdateAllDisplays() end)
     DelayedCall(5.0, function() AttuneProgress:ForceUpdateAllDisplays() end)
