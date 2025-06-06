@@ -4,13 +4,15 @@ local CONST_ADDON_NAME = 'AttuneProgress'
 AttuneProgress = {}
 
 -- Animation and update timing
-local LERP_SPEED = 0.1
-local COMBAT_UPDATE_INTERVAL = 0.25 -- 4 calcs/sec
+local LERP_SPEED = 0.15  -- Much slower for smooth animation
+local TEXT_LERP_SPEED = 0.2  -- Separate speed for text animation
+local COMBAT_UPDATE_INTERVAL = 1 -- 1fps gaming OWO
 local combatUpdateTimer = 0
 local combatUpdateFrame = nil
 
 -- Store animation data for each frame
 local frameAnimationData = {}
+local Settings = {}
 
 local DefaultSettings = {
     showRedForNonAttunable = true,
@@ -21,6 +23,12 @@ local DefaultSettings = {
     faeMode = false,
     scanEquipped = false,
     excludeEquippedBars  = false,
+    
+    -- NEW: Animation settings
+    enableAnimations = true,
+    animationSpeed = 0.15,
+    enableTextAnimations = true,
+    textAnimationSpeed = 0.2,
 
     progressBarColor = { r = 0, g = 1.0, b = 0.0, a = 1.0 },
     
@@ -34,6 +42,30 @@ local DefaultSettings = {
 
     nonAttunableBarColor = {r = 1.0, g = 0.0, b = 0.0}, -- Red
     textColor = { r = 1.0, g = 1.0, b = 1.0, a = 1.0 },
+}
+
+local CheckboxTooltips = {
+    showRedForNonAttunable =
+        "Display red bars for items attunable by your account but not by this character.\nHeight indicates attunement progress.",
+    showBountyIcons =
+        "Show a gold icon on items that currently have a bounty.",
+    showAccountIcons =
+        "Show a blue square for items attunable by your account but not by this character.",
+    showProgressText =
+        "Display the numeric percentage on each progress bar.",
+    showAccountAttuneText =
+        "Display 'Acc' text on items attunable by account only.",
+    faeMode =
+        "Fae Mode: Always show progress bars, even when they are at 100%.",
+    scanEquipped =
+        "Scan your equipped gear and display attunement bars on the character frame slots.",
+    excludeEquippedBars =
+        "Suppress attunement progress **bars** on equipped-gear slots\n" ..
+        "(icons and text will still show on hover).",
+    enableAnimations = 
+        "Enable smooth animations for progress bars when values change.",
+    enableTextAnimations =
+        "Enable smooth animations for progress text numbers.",
 }
 local FORGE_LEVEL_MAP   = { BASE = 0, TITANFORGED = 1, WARFORGED = 2, LIGHTFORGED = 3 }
 local ForgeLevelNames   = { [0] = 'BASE', [1] = 'TITANFORGED', [2] = 'WARFORGED', [3] = 'LIGHTFORGED' }
@@ -58,27 +90,6 @@ local function CopyTable(src)
     end
     return dst
 end
-
-local Settings = {}
-local CheckboxTooltips = {
-    showRedForNonAttunable =
-        "Display red bars for items attunable by your account but not by this character.\nHeight indicates attunement progress.",
-    showBountyIcons =
-        "Show a gold icon on items that currently have a bounty.",
-    showAccountIcons =
-        "Show a blue square for items attunable by your account but not by this character.",
-    showProgressText =
-        "Display the numeric percentage on each progress bar.",
-    showAccountAttuneText =
-        "Display 'Acc' text on items attunable by account only.",
-    faeMode =
-        "Fae Mode: Always show progress bars, even when they are at 100%.",
-    scanEquipped =
-        "Scan your equipped gear and display attunement bars on the character frame slots.",
-    excludeEquippedBars =
-        "Suppress attunement progress **bars** on equipped-gear slots\n" ..
-        "(icons and text will still show on hover).",
-}
 
 local EquipmentSlotMapping = {
     { id = INVSLOT_HEAD,           frame = "CharacterHeadSlot"       },
@@ -505,23 +516,12 @@ local function SetFrameAttunement(frame, itemLink)
             local fl = GetForgeLevelFromLink(itemLink)
             local key = ForgeLevelNames[fl] or 'BASE'
             barCol = Settings.forgeColors[key]
-            if Settings.showProgressText then
-                frame.attuneText:SetText(string.format('%.0f%%', progress))
-            end
         end
     elseif Settings.showRedForNonAttunable and accOK then
         if progress > 0  then
             showBar = true
             barCol  = Settings.nonAttunableBarColor
-            if Settings.showProgressText then
-                frame.attuneText:SetText(string.format('%.0f%%', progress))
-            end
         end
-    end
-
-    -- Set "Acc" text if applicable
-    if Settings.showAccountAttuneText and progress < 100 and not(charOK) and accOK then
-        frame.attuneText:SetText('Acc')
     end
 
     -- Suppress bar on equipped items if requested
@@ -559,7 +559,12 @@ local function SetFrameAttunement(frame, itemLink)
             frameAnimationData[frameName] = {
                 currentHeight = 0,
                 targetHeight = 0,
-                isAnimating = false
+                isAnimating = false,
+                currentProgress = progress, -- Initialize with current progress
+                targetProgress = progress,
+                isTextAnimating = false,
+                textStepTimer = 0,
+                textStepInterval = 0.1
             }
         end
 
@@ -579,52 +584,115 @@ local function SetFrameAttunement(frame, itemLink)
             frameAnimationData[frameName] = {
                 currentHeight = targetHeight,
                 targetHeight = targetHeight,
-                isAnimating = false
+                isAnimating = false,
+                currentProgress = progress,
+                targetProgress = progress,
+                isTextAnimating = false,
+                textStepTimer = 0,
+                textStepInterval = 0.1
             }
         end
 
         local animData = frameAnimationData[frameName]
 
-        -- Check if we need to animate
-        if math.abs(animData.targetHeight - targetHeight) > 1 then
+        -- Check if we need to animate height
+        if Settings.enableAnimations and math.abs(animData.targetHeight - targetHeight) > 1 then
             animData.targetHeight = targetHeight
             animData.isAnimating = true
+        else
+            -- No animation or small change, set directly
+            animData.currentHeight = targetHeight
+            animData.targetHeight = targetHeight
+            animData.isAnimating = false
+        end
 
-            -- Create animation OnUpdate if not already animating
-            if not progFrame.animationScript then
-                progFrame.animationScript = true
-                progFrame:SetScript("OnUpdate", function(self, elapsed)
-                    local data = frameAnimationData[frameName]
-                    if not data or not data.isAnimating then
-                        self:SetScript("OnUpdate", nil)
-                        self.animationScript = nil
-                        return
-                    end
+        -- FIXED: Text stepping animation
+        if Settings.enableTextAnimations and Settings.showProgressText and math.abs(animData.targetProgress - progress) > 0.1 then
+            animData.targetProgress = progress
+            animData.isTextAnimating = true
+            -- Reset stepping data for integer animation
+            animData.textStepTimer = 0
+            animData.textStepInterval = 1 / (Settings.textAnimationSpeed * 20) -- Steps per second
+        else
+            -- No animation or small change, set directly
+            animData.currentProgress = progress
+            animData.targetProgress = progress
+            animData.isTextAnimating = false
+        end
 
-                    -- Lerp towards target height
-                    local diff = data.targetHeight - data.currentHeight
-                    if math.abs(diff) < 0.5 then
+        -- Create or update animation OnUpdate
+        if (animData.isAnimating or animData.isTextAnimating) and not progFrame.animationScript then
+            progFrame.animationScript = true
+            progFrame:SetScript("OnUpdate", function(self, elapsed)
+                local data = frameAnimationData[frameName]
+                if not data then
+                    self:SetScript("OnUpdate", nil)
+                    self.animationScript = nil
+                    return
+                end
+
+                local stillAnimating = false
+
+                -- Animate height
+                if data.isAnimating then
+                    local heightDiff = data.targetHeight - data.currentHeight
+                    if math.abs(heightDiff) < 0.1 then
                         -- Close enough, snap to target
                         data.currentHeight = data.targetHeight
                         data.isAnimating = false
-                        self:SetScript("OnUpdate", nil)
-                        self.animationScript = nil
                     else
-                        -- Animate towards target
-                        data.currentHeight = data.currentHeight + (diff * LERP_SPEED * elapsed)
+                        -- Smooth lerp using configurable speed
+                        local lerpSpeed = Settings.animationSpeed or 0.15
+                        data.currentHeight = data.currentHeight + (heightDiff * lerpSpeed * (elapsed * 60)) -- Normalize for 60fps
+                        stillAnimating = true
                     end
 
                     -- Apply the height
                     self:SetHeight(data.currentHeight)
-                    self.child:SetHeight(data.currentHeight - 2)
-                end)
-            end
-        else
-            -- No animation needed, set height directly
-            animData.currentHeight = targetHeight
-            animData.targetHeight = targetHeight
-            progFrame:SetHeight(targetHeight)
-            progFrame.child:SetHeight(targetHeight - 2)
+                    self.child:SetHeight(math.max(data.currentHeight - 2, 0))
+                end
+
+                -- FIXED: Animate text (integer stepping)
+                if data.isTextAnimating then
+                    data.textStepTimer = data.textStepTimer + elapsed
+                    
+                    if data.textStepTimer >= data.textStepInterval then
+                        data.textStepTimer = 0
+                        
+                        -- Determine direction and step by 1
+                        if data.currentProgress < data.targetProgress then
+                            data.currentProgress = math.min(data.currentProgress + 1, data.targetProgress)
+                        elseif data.currentProgress > data.targetProgress then
+                            data.currentProgress = math.max(data.currentProgress - 1, data.targetProgress)
+                        end
+                        
+                        -- Update the text display immediately during animation
+                        if frame.attuneText then
+                            frame.attuneText:SetText(string.format('%.0f%%', data.currentProgress))
+                        end
+                        
+                        -- Check if we've reached the target
+                        if math.abs(data.currentProgress - data.targetProgress) < 0.1 then
+                            data.currentProgress = data.targetProgress
+                            data.isTextAnimating = false
+                        else
+                            stillAnimating = true
+                        end
+                    else
+                        stillAnimating = true
+                    end
+                end
+
+                -- Stop animation if nothing is animating
+                if not stillAnimating then
+                    self:SetScript("OnUpdate", nil)
+                    self.animationScript = nil
+                end
+            end)
+        elseif not animData.isAnimating and not animData.isTextAnimating then
+            -- Set heights directly if not animating
+            progFrame:SetHeight(animData.currentHeight)
+            progFrame.child:SetHeight(math.max(animData.currentHeight - 2, 0))
         end
 
         -- Apply the chosen color to the bar fill
@@ -637,8 +705,14 @@ local function SetFrameAttunement(frame, itemLink)
         end
         progFrame:Show()
 
-        -- Show text if it has content
-        if frame.attuneText:GetText() and frame.attuneText:GetText() ~= "" then
+        -- Handle text display
+        if Settings.showProgressText and (charOK or (Settings.showRedForNonAttunable and accOK and progress > 0)) then
+            -- Use animated progress if available, otherwise use actual progress
+            local displayProgress = frameAnimationData[frameName] and frameAnimationData[frameName].currentProgress or progress
+            frame.attuneText:SetText(string.format('%.0f%%', displayProgress))
+            frame.attuneText:Show()
+        elseif Settings.showAccountAttuneText and progress < 100 and not(charOK) and accOK then
+            frame.attuneText:SetText('Acc')
             frame.attuneText:Show()
         else
             frame.attuneText:Hide()
@@ -648,14 +722,14 @@ local function SetFrameAttunement(frame, itemLink)
         if progFrame then progFrame:Hide() end
 
         -- Show text if it has content
-        if frame.attuneText:GetText() and frame.attuneText:GetText() ~= "" then
+        if Settings.showAccountAttuneText and progress < 100 and not(charOK) and accOK then
+            frame.attuneText:SetText('Acc')
             frame.attuneText:Show()
         else
             frame.attuneText:Hide()
         end
     end
 end
-
 
 local function UpdateItemDisplay(frame, itemLink)
     -- If the addon is not logically "enabled" (though the option is removed, we keep the flag)
@@ -754,7 +828,9 @@ function AttuneProgress:RefreshOptionsPanel()
         "showAccountAttuneText",
         "faeMode",
         "scanEquipped",
-        "excludeEquippedBars"
+        "excludeEquippedBars",
+        "enableAnimations",      -- NEW
+        "enableTextAnimations"   -- NEW
     }
     
     for _, settingKey in ipairs(checkboxMappings) do
@@ -762,6 +838,17 @@ function AttuneProgress:RefreshOptionsPanel()
         if checkbox then
             checkbox:SetChecked(Settings[settingKey])
         end
+    end
+    
+    -- Update sliders
+    local slider = _G["AttuneProgressSlider_animationSpeed"]
+    if slider then
+        slider:SetValue(Settings.animationSpeed)
+    end
+    
+    slider = _G["AttuneProgressSlider_textAnimationSpeed"]
+    if slider then
+        slider:SetValue(Settings.textAnimationSpeed)
     end
 end
 
@@ -825,6 +912,35 @@ local function BagnonGuildBank_OnUpdate(self, elapsed)
     end
 
     UpdateItemDisplay(self, itemLink)
+end
+
+local function CreateSlider(parent, text, settingKey, minVal, maxVal, step, anchor, yOffset)
+    local slider = CreateFrame("Slider", "AttuneProgressSlider_" .. settingKey, parent, "OptionsSliderTemplate")
+    slider:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, yOffset)
+    slider:SetMinMaxValues(minVal, maxVal)
+    slider:SetValueStep(step)
+    slider:SetValue(Settings[settingKey])
+    slider:SetWidth(200)
+    
+    -- Set slider labels
+    local sliderName = slider:GetName()
+    _G[sliderName .. "Low"]:SetText(tostring(minVal))
+    _G[sliderName .. "High"]:SetText(tostring(maxVal))
+    _G[sliderName .. "Text"]:SetText(text .. ": " .. string.format("%.2f", Settings[settingKey]))
+    
+    slider:SetScript("OnValueChanged", function(self, value)
+        Settings[settingKey] = value
+        _G[sliderName .. "Text"]:SetText(text .. ": " .. string.format("%.2f", value))
+        SaveSettings()
+        -- Update the global lerp speeds
+        if settingKey == "animationSpeed" then
+            LERP_SPEED = value
+        elseif settingKey == "textAnimationSpeed" then
+            TEXT_LERP_SPEED = value
+        end
+    end)
+    
+    return slider
 end
 
 -- Options Panel Creation
@@ -953,6 +1069,42 @@ local function CreateOptionsPanel()
       -10
     )
 
+    -- Animation Settings
+    lastElement = CreateCheckbox(
+        panel,
+        "Enable smooth bar animations",
+        "enableAnimations",
+        lastElement,
+        -20  -- Extra spacing for new section
+    )
+
+    lastElement = CreateCheckbox(
+        panel,
+        "Enable smooth text number animations",
+        "enableTextAnimations",
+        lastElement,
+        -10
+    )
+
+    -- Animation speed sliders
+    lastElement = CreateSlider(
+        panel,
+        "Bar Animation Speed",
+        "animationSpeed",
+        0.05, 1.0, 0.05,
+        lastElement,
+        -40
+    )
+
+    lastElement = CreateSlider(
+        panel,
+        "Text Animation Speed", 
+        "textAnimationSpeed",
+        0.05, 1.0, 0.05,
+        lastElement,
+        -50
+    )
+
 
     -- Description
     --[[--
@@ -1030,9 +1182,118 @@ local function CreateColorOptionsPanel()
   
     InterfaceOptions_AddCategory(cp)
     return cp
-  end
+end
 
--- WotLK compatible timer function
+local function CreateAnimationOptionsPanel()
+    local ap = CreateFrame("Frame")
+    ap.name = 'Animation Settings'
+    ap.parent = CONST_ADDON_NAME
+    
+    local header = ap:CreateFontString(nil, 'ARTWORK', 'GameFontNormalLarge')
+    header:SetPoint('TOPLEFT', 16, -16)
+    header:SetText(CONST_ADDON_NAME .. ' - Animation Settings')
+    
+    local lastElement = header
+    
+    -- Animation checkboxes
+    local function CreateAnimationCheckbox(parent, text, settingKey, anchorFrame, offsetY)
+        local checkboxName = "AttuneProgressAnimCheckbox_" .. settingKey
+        local cb = CreateFrame("CheckButton", checkboxName, parent,
+                               "InterfaceOptionsCheckButtonTemplate")
+        cb:SetPoint("TOPLEFT", anchorFrame, "BOTTOMLEFT", 0, offsetY)
+    
+        local textObject = _G[cb:GetName() .. "Text"]
+        if textObject then
+            textObject:SetText(text)
+        else
+            for i = 1, cb:GetNumRegions() do
+                local region = select(i, cb:GetRegions())
+                if region and region:GetObjectType() == "FontString" then
+                    region:SetText(text)
+                    break
+                end
+            end
+        end
+    
+        cb:SetChecked(Settings[settingKey])
+        cb:SetScript("OnClick", function(self)
+            Settings[settingKey] = not not self:GetChecked()
+            SaveSettings()
+            AttuneProgress:ForceUpdateAllDisplays()
+        end)
+    
+        -- Tooltip
+        local tip = CheckboxTooltips[settingKey]
+        if tip then
+            cb:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetText(text, 1, 1, 1)
+                GameTooltip:AddLine(tip, nil, nil, nil, true)
+                GameTooltip:Show()
+            end)
+            cb:SetScript("OnLeave", function(self)
+                GameTooltip:Hide()
+            end)
+        end
+    
+        return cb
+    end
+    
+    -- Animation enable checkboxes
+    lastElement = CreateAnimationCheckbox(
+        ap,
+        "Enable smooth bar animations",
+        "enableAnimations",
+        lastElement,
+        -30
+    )
+
+    lastElement = CreateAnimationCheckbox(
+        ap,
+        "Enable text number animations (counts up/down)",
+        "enableTextAnimations",
+        lastElement,
+        -10
+    )
+    
+    -- Animation speed sliders
+    lastElement = CreateSlider(
+        ap,
+        "Bar Animation Speed",
+        "animationSpeed",
+        0.05, 1.0, 0.05,
+        lastElement,
+        -40
+    )
+
+    lastElement = CreateSlider(
+        ap,
+        "Text Animation Speed (steps per second)", 
+        "textAnimationSpeed",
+        0.1, 2.0, 0.1,
+        lastElement,
+        -60
+    )
+    
+    -- Description
+    local description = ap:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    description:SetPoint("TOPLEFT", lastElement, "BOTTOMLEFT", 0, -40)
+    description:SetWidth(500)
+    description:SetJustifyH("LEFT")
+    description:SetText(
+        "Animation Settings:\n\n" ..
+        "• Bar animations smoothly transition progress bar heights\n" ..
+        "• Text animations count up/down in whole numbers (30→31→32→33...)\n" ..
+        "• Higher animation speeds = faster transitions\n" ..
+        "• Text speed controls how many numbers per second it counts\n\n" ..
+        "Disable animations if you prefer instant updates or experience performance issues."
+    )
+    
+    InterfaceOptions_AddCategory(ap)
+    return ap
+end
+
+  -- WotLK compatible timer function
 local function DelayedCall(delay, func)
     local frame = CreateFrame("Frame")
     local elapsed = 0
@@ -1248,57 +1509,56 @@ end
 
 -- Force a refresh on all currently displayed items
 function AttuneProgress:ForceUpdateAllDisplays()
-    -- Update container frames
+    -- Instead of immediately updating, let the natural OnUpdate cycle handle it
+    -- This prevents drawing with stale GetContainerItemLink data
+    
+    -- Just trigger the frames to update on their next OnUpdate cycle
     for i = 1, NUM_CONTAINER_FRAMES do
         if _G["ContainerFrame" .. i] and _G["ContainerFrame" .. i]:IsVisible() then
             for j = 1, 36 do
                 local frame = _G["ContainerFrame" .. i .. "Item" .. j]
                 if frame then
-                    local itemLink = GetContainerItemLink(i, j)
-                    UpdateItemDisplay(frame, itemLink)
+                    -- Reset the update timer to force immediate update on next cycle
+                    frame.attuneLastUpdate = 0.1 -- Force update on next OnUpdate
                 end
             end
         end
     end
 
-    -- Update ElvUI container frames
+    -- Do the same for other frame types
     for bag = 0, 4 do
         for slot = 1, 36 do
             local frameName = "ElvUI_ContainerFrameBag" .. bag .. "Slot" .. slot
             local frame = _G[frameName]
             if frame then
-                local itemLink = GetContainerItemLink(bag, slot)
-                UpdateItemDisplay(frame, itemLink)
+                frame.attuneLastUpdate = 0.1
             end
         end
     end
 
-    -- Update AdiBags frames
     for i = 1, #AdiBagsSlots do
         local frameName = AdiBagsSlots[i]
         local frame = _G[frameName]
         if frame then
-            -- Let the OnUpdate handler determine the item link
-            AdiBags_OnUpdate(frame, 0.1) -- Force an immediate update
+            frame.attuneLastUpdate = 0.1
         end
     end
 
-    -- Update Bagnon Guild Bank frames
     if _G.BagnonFrameguildbank and _G.BagnonFrameguildbank:IsVisible() then
         for i = 1, #BagnonGuildBankSlots do
             local frameName = BagnonGuildBankSlots[i]
             local frame = _G[frameName]
             if frame then
-                -- We'll let the OnUpdate handler determine the item link
-                -- since it has the logic for multiple methods
-                BagnonGuildBank_OnUpdate(frame, 0.1) -- Force an immediate update
+                frame.attuneLastUpdate = 0.1
             end
         end
     end
+
     if Settings.scanEquipped then
         for _, info in ipairs(EquipmentSlotMapping) do
             local slotFrame = _G[info.frame]
             if slotFrame then
+                -- For equipped gear, we can update immediately since GetInventoryItemLink is reliable
                 local link = GetInventoryItemLink("player", info.id)
                 UpdateItemDisplay(slotFrame, link)
             end
