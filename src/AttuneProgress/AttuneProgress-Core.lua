@@ -828,13 +828,24 @@ function AttuneProgress:RefreshOptionsPanel()
         "showAccountAttuneText",
         "faeMode",
         "scanEquipped",
-        "excludeEquippedBars",
-        "enableAnimations",      -- NEW
-        "enableTextAnimations"   -- NEW
+        "excludeEquippedBars"
     }
     
     for _, settingKey in ipairs(checkboxMappings) do
         local checkbox = _G["AttuneProgressCheckbox_" .. settingKey]
+        if checkbox then
+            checkbox:SetChecked(Settings[settingKey])
+        end
+    end
+    
+    -- Update animation panel checkboxes (separate naming)
+    local animCheckboxMappings = {
+        "enableAnimations",
+        "enableTextAnimations"
+    }
+    
+    for _, settingKey in ipairs(animCheckboxMappings) do
+        local checkbox = _G["AttuneProgressAnimCheckbox_" .. settingKey]
         if checkbox then
             checkbox:SetChecked(Settings[settingKey])
         end
@@ -1069,41 +1080,7 @@ local function CreateOptionsPanel()
       -10
     )
 
-    -- Animation Settings
-    lastElement = CreateCheckbox(
-        panel,
-        "Enable smooth bar animations",
-        "enableAnimations",
-        lastElement,
-        -20  -- Extra spacing for new section
-    )
 
-    lastElement = CreateCheckbox(
-        panel,
-        "Enable smooth text number animations",
-        "enableTextAnimations",
-        lastElement,
-        -10
-    )
-
-    -- Animation speed sliders
-    lastElement = CreateSlider(
-        panel,
-        "Bar Animation Speed",
-        "animationSpeed",
-        0.05, 1.0, 0.05,
-        lastElement,
-        -40
-    )
-
-    lastElement = CreateSlider(
-        panel,
-        "Text Animation Speed", 
-        "textAnimationSpeed",
-        0.05, 1.0, 0.05,
-        lastElement,
-        -50
-    )
 
 
     -- Description
@@ -1283,10 +1260,10 @@ local function CreateAnimationOptionsPanel()
     description:SetText(
         "Animation Settings:\n\n" ..
         "• Bar animations smoothly transition progress bar heights\n" ..
-        "• Text animations count up/down in whole numbers (30→31→32→33...)\n" ..
+        "• Text animations count up/down in whole numbers (30,31,32,33...)\n" ..
         "• Higher animation speeds = faster transitions\n" ..
         "• Text speed controls how many numbers per second it counts\n\n" ..
-        "Disable animations if you prefer instant updates or experience performance issues."
+        "Disable animations if you prefer instant updates or experience \nperformance issues."
     )
     
     InterfaceOptions_AddCategory(ap)
@@ -1367,7 +1344,8 @@ function AttuneProgress:Initialize()
 
     UpdateConfigColors()
     CreateOptionsPanel()
-    CreateColorOptionsPanel()    
+    CreateColorOptionsPanel()
+    CreateAnimationOptionsPanel()
     AttuneProgress:EnableUpdates()
     CreateCombatUpdateFrame()
     PeriodicFrameHooking()
